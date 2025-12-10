@@ -23,6 +23,8 @@ func (s *Server) RegisterMux(mux *http.ServeMux) {
 	mux.HandleFunc("/conversation", s.handleConversation)
 	mux.HandleFunc("/conversation/create", s.handleCreateConversation)
 	mux.HandleFunc("/conversation/approve-plan", s.handleApprovePlan)
+	mux.HandleFunc("/conversation/resume", s.handleResume)
+	mux.HandleFunc("/conversation/approve-command", s.handleApproveCommand)
 	mux.HandleFunc("/inbox", s.handleInbox)
 	mux.HandleFunc("/run", s.handleRun)
 }
@@ -148,6 +150,47 @@ func (s *Server) handleApprovePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conv, err := s.svc.ApprovePlan(r.Context(), payload.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, conv)
+}
+
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	conv, err := s.svc.Resume(r.Context(), payload.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, conv)
+}
+
+func (s *Server) handleApproveCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		ID     string `json:"id"`
+		StepID string `json:"step_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	conv, err := s.svc.ApproveCommand(r.Context(), payload.ID, payload.StepID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

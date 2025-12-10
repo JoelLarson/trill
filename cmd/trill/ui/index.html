@@ -34,25 +34,27 @@
       background: var(--bg);
       color: var(--fg);
     }
-    #conversations { margin-bottom: 20px; }
+    #conversations { margin-top: 10px; }
     .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
     button { cursor: pointer; }
+    input[type="text"] { padding: 6px; }
     .conv { border: 1px solid var(--border); padding: 10px; margin-bottom: 10px; background: var(--panel); }
     .messages { max-height: 200px; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 5px; }
     .msg { margin: 6px 0; }
     .msg.user { color: var(--user); }
     .msg.assistant { color: var(--assistant); }
     .msg.error { color: var(--error); font-style: italic; }
-    #newMessage { width: 80%; }
     .status { font-size: 12px; color: var(--muted); margin-top: 6px; }
     .raw-output { background: var(--raw-bg); border: 1px dashed var(--border); padding: 6px; margin-top: 4px; white-space: pre-wrap; font-size: 12px; color: var(--fg); }
     .session { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     .session button { margin-left: 6px; }
+    .pill { display: inline-block; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); margin-right: 6px; }
   </style>
 </head>
 <body>
   <h1>Trill</h1>
   <div class="toolbar">
+    <input id="goalInput" type="text" placeholder="Enter goal/task..." style="flex:1;" />
     <button id="startBtn">Start New Conversation</button>
     <button id="themeToggle">Toggle Theme</button>
   </div>
@@ -60,9 +62,7 @@
   <div id="conversations"></div>
 
   <script>
-    const apiBase = '';
     const formatSeconds = (ms) => (ms / 1000).toFixed(1) + 's';
-    let pendingConversations = [];
     const applyTheme = (mode) => {
       document.body.classList.toggle('dark', mode === 'dark');
       localStorage.setItem('theme', mode);
@@ -97,8 +97,6 @@
       const ids = await res.json();
       const container = document.getElementById('conversations');
       container.innerHTML = '';
-      pendingConversations = pendingConversations.filter(c => !c.session_id);
-      pendingConversations.forEach(conv => renderConversation(conv));
       for (const id of ids) {
         try {
           const conv = await fetchConversation(id);
@@ -111,58 +109,73 @@
       }
       fetchInbox();
     }
-    async function renderConversation(conv) {
-      const domId = conv.session_id || conv.id || conv.local_id;
+    function renderConversation(conv) {
+      const domId = conv.session_id || conv.id;
       const div = document.createElement('div');
       div.className = 'conv';
       div.id = 'conv-' + domId;
-      const title = document.createElement('h3');
-      title.textContent = 'Conversation';
+
+      const titleRow = document.createElement('div');
+      titleRow.style.display = 'flex';
+      titleRow.style.justifyContent = 'space-between';
+      const h3 = document.createElement('h3');
+      h3.textContent = conv.goal || 'Conversation';
+      const actions = document.createElement('div');
       const closeBtn = document.createElement('button');
       closeBtn.textContent = 'Close';
-      closeBtn.style.marginLeft = '10px';
       closeBtn.onclick = async () => {
-        // Pending chat: just remove locally.
-        if (!conv.session_id) {
-          pendingConversations = pendingConversations.filter(c => c !== conv);
-          div.remove();
-          return;
-        }
-        closeBtn.disabled = true;
-        try {
-          const resp = await fetch('/close', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: conv.session_id })
-          });
-          if (!resp.ok) {
-            const errText = await resp.text();
-            alert(`Close failed: ${errText || resp.statusText}`);
-          } else {
-            div.remove();
-            await fetchConversations();
-          }
-        } catch (err) {
-          alert(`Close failed: ${err.message}`);
-        } finally {
-          closeBtn.disabled = false;
-        }
+        if (!conv.session_id) return;
+        const resp = await fetch('/close', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: conv.session_id })
+        });
+        if (!resp.ok) alert(await resp.text());
+        else await fetchConversations();
       };
-      title.appendChild(closeBtn);
-      div.appendChild(title);
+      const approveBtn = document.createElement('button');
+      approveBtn.textContent = 'Approve Plan';
+      approveBtn.onclick = async () => {
+        const resp = await fetch('/conversation/approve-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: conv.session_id })
+        });
+        if (!resp.ok) alert(await resp.text());
+        else await fetchConversations();
+      };
+      const resumeBtn = document.createElement('button');
+      resumeBtn.textContent = 'Resume';
+      resumeBtn.onclick = async () => {
+        const resp = await fetch('/conversation/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: conv.session_id })
+        });
+        if (!resp.ok) alert(await resp.text());
+        else await fetchConversations();
+      };
+      actions.appendChild(closeBtn);
+      if (conv.state === 'awaiting_plan_approval') actions.appendChild(approveBtn);
+      if (conv.state === 'blocked') actions.appendChild(resumeBtn);
+      titleRow.appendChild(h3);
+      titleRow.appendChild(actions);
+      div.appendChild(titleRow);
+
+      const meta = document.createElement('div');
+      meta.className = 'status';
+      meta.textContent = `State: ${conv.state || 'unknown'}${conv.awaiting_reason ? ' — ' + conv.awaiting_reason : ''}`;
+      div.appendChild(meta);
+
       const session = document.createElement('div');
       session.className = 'session';
-      const setSessionText = (sid) => {
-        if (!sid) {
-          session.textContent = 'Codex session: pending...';
-          return;
-        }
-        session.textContent = `Codex session: ${sid}`;
+      if (conv.session_id) {
+        session.textContent = `Codex session: ${conv.session_id}`;
         const copyBtn = document.createElement('button');
         copyBtn.textContent = 'Copy';
         copyBtn.onclick = async () => {
           try {
-            await navigator.clipboard.writeText(sid);
+            await navigator.clipboard.writeText(conv.session_id);
             copyBtn.textContent = 'Copied';
             setTimeout(() => (copyBtn.textContent = 'Copy'), 1200);
           } catch (err) {
@@ -171,39 +184,76 @@
           }
         };
         session.appendChild(copyBtn);
-      };
-      setSessionText(conv.session_id);
+      }
       div.appendChild(session);
+
+      if (conv.plan_text) {
+        const planTitle = document.createElement('div');
+        planTitle.textContent = 'Plan:';
+        const plan = document.createElement('pre');
+        plan.className = 'raw-output';
+        plan.textContent = conv.plan_text;
+        div.appendChild(planTitle);
+        div.appendChild(plan);
+      }
+
+      if (Array.isArray(conv.steps) && conv.steps.length) {
+        const stepsList = document.createElement('div');
+        stepsList.innerHTML = '<div><strong>Steps</strong></div>';
+        conv.steps.forEach((step) => {
+          const sdiv = document.createElement('div');
+          sdiv.className = 'status';
+          sdiv.innerHTML = `<span class="pill">${step.status}</span> ${step.title}`;
+          if (step.pending_command) {
+            const cmdSpan = document.createElement('div');
+            cmdSpan.className = 'status';
+            cmdSpan.textContent = `Pending command: ${step.pending_command}`;
+            const approveCmd = document.createElement('button');
+            approveCmd.textContent = 'Approve Command';
+            approveCmd.onclick = async () => {
+              const resp = await fetch('/conversation/approve-command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: conv.session_id, step_id: step.id })
+              });
+              if (!resp.ok) alert(await resp.text());
+              else await fetchConversations();
+            };
+            cmdSpan.appendChild(approveCmd);
+            sdiv.appendChild(cmdSpan);
+          }
+          if (step.logs && step.logs.length) {
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = 'Logs';
+            details.appendChild(summary);
+            step.logs.forEach((logLine) => {
+              const l = document.createElement('div');
+              l.textContent = logLine;
+              details.appendChild(l);
+            });
+            sdiv.appendChild(details);
+          }
+          stepsList.appendChild(sdiv);
+        });
+        div.appendChild(stepsList);
+      }
+
       const msgsDiv = document.createElement('div');
       msgsDiv.className = 'messages';
       div.appendChild(msgsDiv);
-      const status = document.createElement('div');
-      status.className = 'status';
-      status.textContent = '';
-      div.appendChild(status);
       const input = document.createElement('input');
       input.type = 'text';
-        input.id = `newMessage-${domId}`;
-      input.placeholder = 'Enter message...';
+      input.id = `newMessage-${domId}`;
+      input.placeholder = 'Send a chat message...';
       const sendBtn = document.createElement('button');
       sendBtn.textContent = 'Send';
       sendBtn.onclick = async () => {
         const text = input.value.trim();
         if (!text) return;
         addMessage(msgsDiv, 'user', text);
-        const start = performance.now();
-        const updateStatus = () => {
-          status.textContent = 'Processing... ' + formatSeconds(performance.now() - start);
-        };
-        updateStatus();
-        const timer = setInterval(updateStatus, 200);
         sendBtn.disabled = true;
         input.disabled = true;
-        let outcome = 'Completed';
-        let pendingAssistantReply = null;
-        let pendingRawOutput = null;
-        let pendingDuration = null;
-        let newSessionId = null;
         try {
           const resp = await fetch('/send', {
             method: 'POST',
@@ -211,45 +261,13 @@
             body: JSON.stringify({ id: conv.session_id || '', message: text })
           });
           if (!resp.ok) {
-            const errorText = await resp.text();
-            addMessage(msgsDiv, 'error', `Failed to send: ${errorText || resp.statusText}`);
-            outcome = 'Failed';
+            addMessage(msgsDiv, 'error', await resp.text());
           } else {
             const data = await resp.json();
-            pendingAssistantReply = data.reply;
-            pendingRawOutput = data.raw_output;
-            pendingDuration = data.duration_ms;
-            newSessionId = data.session_id;
-            conv.session_id = data.session_id;
-            conv.id = data.session_id;
-            conv.messages = conv.messages || [];
-            conv.model_calls = conv.model_calls || [];
-            conv.messages.push({ role: 'user', content: text });
-            conv.messages.push({ role: 'assistant', content: data.reply });
-            conv.model_calls.push({
-              prompt: data.prompt,
-              raw_output: data.raw_output,
-              reply: data.reply,
-              duration_ms: data.duration_ms,
-              session_id: data.session_id
-            });
+            addMessage(msgsDiv, 'assistant', data.reply, data.duration_ms ? formatSeconds(data.duration_ms) : null, data.raw_output);
           }
         } catch (err) {
-          addMessage(msgsDiv, 'error', `Network error: ${err.message}`);
-          outcome = 'Failed';
-        }
-        const elapsed = formatSeconds(performance.now() - start);
-        clearInterval(timer);
-        status.textContent = `${outcome} in ${elapsed}`;
-        if (pendingAssistantReply !== null) {
-          const meta = pendingDuration != null ? formatSeconds(pendingDuration) : elapsed;
-          addMessage(msgsDiv, 'assistant', pendingAssistantReply, meta, pendingRawOutput);
-        }
-        if (newSessionId) {
-          setSessionText(newSessionId);
-          // remove from pending list now that session exists
-          pendingConversations = pendingConversations.filter(c => c !== conv);
-          fetchConversations();
+          addMessage(msgsDiv, 'error', err.message);
         }
         sendBtn.disabled = false;
         input.disabled = false;
@@ -263,20 +281,22 @@
       });
       div.appendChild(input);
       div.appendChild(sendBtn);
-      document.getElementById('conversations').appendChild(div);
-      // Render existing messages (including previous Codex raw output).
+
+      // Render existing messages
       let assistantIdx = 0;
       const modelCalls = Array.isArray(conv.model_calls) ? conv.model_calls : [];
-      conv.messages.forEach((m) => {
+      (conv.messages || []).forEach((m) => {
         if (m.role === 'assistant') {
           const call = modelCalls[assistantIdx] || {};
-          const meta = call.duration_ms != null ? formatSeconds(call.duration_ms) : null;
-          addMessage(msgsDiv, m.role, m.content, meta, call.raw_output);
+          const metaMsg = call.duration_ms != null ? formatSeconds(call.duration_ms) : null;
+          addMessage(msgsDiv, m.role, m.content, metaMsg, call.raw_output);
           assistantIdx += 1;
         } else {
           addMessage(msgsDiv, m.role, m.content);
         }
       });
+
+      document.getElementById('conversations').appendChild(div);
     }
     function addMessage(container, role, text, meta, rawOutput) {
       const wrapper = document.createElement('div');
@@ -298,16 +318,27 @@
       }
       container.appendChild(wrapper);
     }
+
     document.getElementById('startBtn').onclick = async () => {
-      const conv = { local_id: `pending-${Date.now()}-${Math.random().toString(16).slice(2)}`, messages: [], model_calls: [], session_id: null };
-      pendingConversations.push(conv);
-      renderConversation(conv);
+      const goal = document.getElementById('goalInput').value.trim();
+      if (!goal) return;
+      const resp = await fetch('/conversation/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal })
+      });
+      if (!resp.ok) {
+        alert(await resp.text());
+        return;
+      }
+      document.getElementById('goalInput').value = '';
+      await fetchConversations();
     };
     document.getElementById('themeToggle').onclick = () => {
       const isDark = document.body.classList.contains('dark');
       applyTheme(isDark ? 'light' : 'dark');
     };
-    // initial load
+
     initTheme();
     fetchConversations();
     fetchInbox();

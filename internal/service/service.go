@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -146,6 +147,49 @@ func (s *Service) Close(ctx context.Context, sessionID string) error {
 	return s.store.Delete(ctx, sessionID)
 }
 
+// ApproveCommand executes a pending command for a blocked step.
+func (s *Service) ApproveCommand(ctx context.Context, sessionID, stepID string) (*types.Conversation, error) {
+	conv, err := s.store.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var target *types.Step
+	for i := range conv.Steps {
+		if conv.Steps[i].ID == stepID {
+			target = &conv.Steps[i]
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("step %s not found", stepID)
+	}
+	if target.PendingCommand == "" {
+		return nil, fmt.Errorf("no pending command for step %s", stepID)
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, "sh", "-c", target.PendingCommand)
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+	target.Logs = append(target.Logs, "EXEC: "+target.PendingCommand, output)
+	target.PendingCommand = ""
+	if err != nil {
+		target.Status = types.StepBlocked
+		conv.State = types.StateBlocked
+		conv.AwaitingReason = fmt.Sprintf("Command failed: %v", err)
+		_ = s.store.Save(ctx, conv)
+		return conv, nil
+	}
+	target.Status = types.StepDone
+	target.CompletedAt = s.clock()
+	conv.State = types.StateExecuting
+	conv.AwaitingReason = ""
+	if err := s.store.Save(ctx, conv); err != nil {
+		return nil, err
+	}
+	return s.advanceExecution(ctx, conv)
+}
+
 func (s *Service) PlanAndExecute(ctx context.Context, goal string) (string, error) {
 	conv, err := s.CreateConversation(ctx, goal)
 	if err != nil {
@@ -202,7 +246,7 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 		}
 		step.Status = types.StepInProgress
 		step.StartedAt = s.clock()
-		execPrompt := fmt.Sprintf("Execute step: %s. Provide SUCCESS when done or ERROR: <reason> if blocked.", step.Title)
+		execPrompt := fmt.Sprintf("Goal: %s\nStep: %s\nYou are executing a plan step. Propose at most one shell command to run as `COMMAND: <cmd>` if needed, otherwise return SUCCESS: <result> or BLOCKED: <reason>. Do not execute the command yourself.", conv.Goal, step.Title)
 		reply, raw, newSession, duration, err := s.model.Send(ctx, conv.SessionID, execPrompt)
 		conv.SessionID = newSession
 		call := types.ModelCall{
@@ -216,7 +260,19 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 		conv.ModelCalls = append(conv.ModelCalls, call)
 		step.Logs = append(step.Logs, reply)
 		step.CompletedAt = s.clock()
-		if err != nil || strings.Contains(strings.ToLower(reply), "error") {
+		upper := strings.ToUpper(strings.TrimSpace(reply))
+		if strings.HasPrefix(upper, "COMMAND:") {
+			cmdText := strings.TrimSpace(reply[len("COMMAND:"):])
+			step.PendingCommand = cmdText
+			step.Status = types.StepBlocked
+			conv.State = types.StateBlocked
+			conv.AwaitingReason = "Awaiting approval to run: " + cmdText
+			if saveErr := s.store.Save(ctx, conv); saveErr != nil {
+				return nil, saveErr
+			}
+			return conv, nil
+		}
+		if err != nil || strings.HasPrefix(upper, "BLOCKED") || strings.HasPrefix(upper, "ERROR") {
 			step.Status = types.StepBlocked
 			conv.State = types.StateBlocked
 			if err != nil {

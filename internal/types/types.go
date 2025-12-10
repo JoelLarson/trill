@@ -34,6 +34,7 @@ type Step struct {
 	Title            string     `json:"title"`
 	Status           StepStatus `json:"status"`
 	RequiresApproval bool       `json:"requires_approval"`
+	PendingCommand   string     `json:"pending_command"`
 	Logs             []string   `json:"logs"`
 	StartedAt        time.Time  `json:"started_at"`
 	CompletedAt      time.Time  `json:"completed_at"`
