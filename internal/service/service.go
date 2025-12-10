@@ -193,11 +193,6 @@ func (s *Service) ApproveCommand(ctx context.Context, sessionID, stepID string) 
 	output := string(out)
 	target.Logs = append(target.Logs, "EXEC: "+pending, output)
 	target.PendingCommand = ""
-	commandMsg := types.Message{
-		Role:    "system",
-		Content: fmt.Sprintf("Command output for `%s`:\n%s", pending, output),
-	}
-	conv.Messages = append(conv.Messages, commandMsg)
 	artifact := s.addArtifact(conv, "Command output", fmt.Sprintf("Output for `%s`", pending), output, pending)
 	if err != nil {
 		target.Status = types.StepBlocked
@@ -265,10 +260,10 @@ func (s *Service) ListInbox(ctx context.Context) ([]types.InboxItem, error) {
 			continue
 		}
 		item := types.InboxItem{
-			SessionID:       conv.SessionID,
-			State:           conv.State,
-			AwaitingReason:  conv.AwaitingReason,
-			Prompt:          conv.Prompt,
+			SessionID:        conv.SessionID,
+			State:            conv.State,
+			AwaitingReason:   conv.AwaitingReason,
+			Prompt:           conv.Prompt,
 			CompletedMessage: conv.CompletedMessage,
 			CompletedAt:      conv.CompletedAt,
 		}
@@ -367,6 +362,9 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 			if saveErr := s.store.Save(ctx, conv); saveErr != nil {
 				return nil, saveErr
 			}
+			if helperErr := s.resolveBlock(ctx, conv, conv.AwaitingReason, step.Title); helperErr != nil {
+				return nil, helperErr
+			}
 			return conv, nil
 		}
 		step.Status = types.StepDone
@@ -443,6 +441,46 @@ func summarizeLogs(conv *types.Conversation, max int) string {
 
 func seedPrompt(prompt string) string {
 	return "You are an execution planner. Given a prompt, produce a concise numbered plan (one step per line) and keep it short.\nPrompt: " + prompt + "\nPlan:"
+}
+
+func unblockPrompt(goal, stepTitle, reason, planText string) string {
+	return fmt.Sprintf("The goal is: %s\nStep %q failed with reason: %s. Provide a concise revised plan (numbered steps) that helps unblock and continue the goal. Keep it short.\nPrevious plan:\n%s\nNew Plan:", goal, stepTitle, reason, planText)
+}
+
+func (s *Service) resolveBlock(ctx context.Context, conv *types.Conversation, reason, stepTitle string) error {
+	prompt := unblockPrompt(conv.Prompt, stepTitle, reason, conv.PlanText)
+	reply, raw, sessionID, duration, err := s.model.Send(ctx, conv.SessionID, prompt)
+	if err != nil {
+		return err
+	}
+	conv.SessionID = sessionID
+	conv.PlanText = reply
+	conv.Steps = parsePlan(reply)
+	conv.PlanVersion++
+	conv.State = types.StateAwaitingPlanApproval
+	conv.AwaitingReason = "Awaiting plan approval after block"
+	call := types.ModelCall{
+		Prompt:     prompt,
+		RawOutput:  raw,
+		Reply:      reply,
+		Timestamp:  s.clock(),
+		DurationMS: duration,
+		SessionID:  sessionID,
+	}
+	conv.ModelCalls = append(conv.ModelCalls, call)
+	if err := s.store.Save(ctx, conv); err != nil {
+		return err
+	}
+	s.emit(obs.Event{
+		Type:        "plan",
+		SessionID:   conv.SessionID,
+		Prompt:      conv.Prompt,
+		ModelPrompt: prompt,
+		PlanText:    reply,
+		RawOutput:   raw,
+		Note:        "Block resolution plan",
+	})
+	return nil
 }
 
 func (s *Service) addArtifact(conv *types.Conversation, title, description, content, source string) *types.Artifact {
