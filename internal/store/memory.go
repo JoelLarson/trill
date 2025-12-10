@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"agent-manager/internal/types"
+	"trill/internal/types"
 )
 
 // MemoryStore keeps conversations in memory; thread-safe.

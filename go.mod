@@ -1,4 +1,4 @@
-module agent-manager
+module trill
 
 go 1.22
 

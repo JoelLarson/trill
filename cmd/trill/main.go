@@ -6,11 +6,11 @@ import (
 	"log"
 	"net/http"
 
-	"agent-manager/internal/codex"
-	"agent-manager/internal/config"
-	"agent-manager/internal/server"
-	"agent-manager/internal/service"
-	"agent-manager/internal/store"
+	"trill/internal/codex"
+	"trill/internal/config"
+	"trill/internal/server"
+	"trill/internal/service"
+	"trill/internal/store"
 )
 
 //go:embed ui/*

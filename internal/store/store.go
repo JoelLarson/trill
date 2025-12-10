@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"agent-manager/internal/types"
+	"trill/internal/types"
 )
 
 // ConversationStore persists conversations keyed by session ID.

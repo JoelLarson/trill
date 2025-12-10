@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"agent-manager/internal/store"
+	"trill/internal/store"
 )
 
 type fakeModel struct {

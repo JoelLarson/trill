@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"agent-manager/internal/service"
+	"trill/internal/service"
 )
 
 type Server struct {

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"agent-manager/internal/codex"
-	"agent-manager/internal/store"
-	"agent-manager/internal/types"
+	"trill/internal/codex"
+	"trill/internal/store"
+	"trill/internal/types"
 )
 
 type Service struct {
