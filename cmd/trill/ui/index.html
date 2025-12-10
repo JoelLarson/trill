@@ -459,8 +459,10 @@ function renderArtifacts(container, conv, input) {
   });
 }
 
-document.getElementById('startBtn').onclick = async () => {
-      const prompt = document.getElementById('promptInput').value.trim();
+    const startBtn = document.getElementById('startBtn');
+    const promptField = document.getElementById('promptInput');
+    startBtn.onclick = async () => {
+      const prompt = promptField.value.trim();
       if (!prompt) return;
       const resp = await fetch('/conversation/create', {
         method: 'POST',
@@ -474,6 +476,12 @@ document.getElementById('startBtn').onclick = async () => {
       document.getElementById('promptInput').value = '';
       await fetchConversations();
     };
+    promptField.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        startBtn.click();
+      }
+    });
     document.getElementById('themeToggle').onclick = () => {
       const isDark = document.body.classList.contains('dark');
       applyTheme(isDark ? 'light' : 'dark');
