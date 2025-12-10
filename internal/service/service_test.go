@@ -25,6 +25,24 @@ func (f *fakeModel) Send(ctx context.Context, sessionID, prompt string) (string,
 	return f.reply, "raw", f.sessionID, f.durationMS, nil
 }
 
+type scriptedModel struct {
+	replies   []string
+	sessionID string
+	idx       int
+}
+
+func (m *scriptedModel) Send(ctx context.Context, sessionID, prompt string) (string, string, string, int64, error) {
+	if m.sessionID == "" {
+		m.sessionID = "sess-scripted"
+	}
+	if m.idx >= len(m.replies) {
+		return "", "", m.sessionID, 0, errors.New("no more replies")
+	}
+	reply := m.replies[m.idx]
+	m.idx++
+	return reply, "raw", m.sessionID, 10, nil
+}
+
 func TestSendCreatesAndPersistsConversation(t *testing.T) {
 	st := store.NewMemoryStore()
 	model := &fakeModel{reply: "world", durationMS: 100}
@@ -58,5 +76,32 @@ func TestSendReturnsErrorOnModelFailure(t *testing.T) {
 	svc := New(st, model, nil)
 	if _, err := svc.Send(context.Background(), "", "hi"); err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestAutoProvideInfoAdvancesExecution(t *testing.T) {
+	st := store.NewMemoryStore()
+	model := &scriptedModel{
+		replies: []string{
+			"1) detect system",
+			"NEED: Which OS and package managers?",
+			"COMMAND: echo detecting",
+			"SUCCESS: collected",
+		},
+	}
+	svc := New(st, model, nil)
+	conv, err := svc.CreateConversation(context.Background(), "Check environment")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	conv, err = svc.ApprovePlan(context.Background(), conv.SessionID)
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if conv.State != "awaiting_command" {
+		t.Fatalf("expected awaiting_command after NEED, got %s", conv.State)
+	}
+	if conv.Steps[0].PendingCommand != "echo detecting" {
+		t.Fatalf("pending command not captured: %+v", conv.Steps[0])
 	}
 }

@@ -45,15 +45,16 @@ func (s *Service) CreateConversation(ctx context.Context, prompt string) (*types
 	if err != nil {
 		return nil, err
 	}
-	steps := parsePlan(reply)
+	steps, acceptance := parsePlanAndCriteria(reply)
 	conv := &types.Conversation{
-		SessionID:      sessionID,
-		Prompt:         prompt,
-		State:          types.StateAwaitingPlanApproval,
-		PlanVersion:    1,
-		PlanText:       reply,
-		AwaitingReason: "Awaiting plan approval",
-		Steps:          steps,
+		SessionID:          sessionID,
+		Prompt:             prompt,
+		State:              types.StateAwaitingPlanApproval,
+		PlanVersion:        1,
+		PlanText:           reply,
+		AcceptanceCriteria: acceptance,
+		AwaitingReason:     "Awaiting plan approval",
+		Steps:              steps,
 		ModelCalls: []types.ModelCall{{
 			Prompt:     planPrompt,
 			RawOutput:  raw,
@@ -98,7 +99,7 @@ func (s *Service) Resume(ctx context.Context, sessionID string) (*types.Conversa
 	if err != nil {
 		return nil, err
 	}
-	if conv.State != types.StateBlocked {
+	if conv.State != types.StateBlocked && conv.State != types.StateAwaitingInfo && conv.State != types.StateAwaitingStepApproval && conv.State != types.StateAwaitingCommand && conv.State != types.StateReplanning {
 		return conv, nil
 	}
 	conv.State = types.StateExecuting
@@ -270,7 +271,7 @@ func (s *Service) ListInbox(ctx context.Context) ([]types.InboxItem, error) {
 		switch conv.State {
 		case types.StateAwaitingPlanApproval:
 			inbox = append(inbox, item)
-		case types.StateBlocked:
+		case types.StateAwaitingCommand, types.StateBlocked:
 			var pendingStep *types.Step
 			for i := range conv.Steps {
 				if conv.Steps[i].PendingCommand != "" {
@@ -284,6 +285,21 @@ func (s *Service) ListInbox(ctx context.Context) ([]types.InboxItem, error) {
 				item.PendingCommand = pendingStep.PendingCommand
 				inbox = append(inbox, item)
 			}
+		case types.StateAwaitingInfo:
+			for i := range conv.Steps {
+				if conv.Steps[i].PendingInfo != "" || conv.Steps[i].PendingDependency != "" {
+					item.StepID = conv.Steps[i].ID
+					item.StepTitle = conv.Steps[i].Title
+					item.PendingInfo = conv.Steps[i].PendingInfo
+					item.PendingDependency = conv.Steps[i].PendingDependency
+					inbox = append(inbox, item)
+					break
+				}
+			}
+		case types.StateAwaitingStepApproval:
+			inbox = append(inbox, item)
+		case types.StateReplanning:
+			inbox = append(inbox, item)
 		case types.StateCompleted:
 			if conv.CompletedMessage != "" {
 				inbox = append(inbox, item)
@@ -300,7 +316,7 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 			continue
 		}
 		if step.RequiresApproval {
-			conv.State = types.StateBlocked
+			conv.State = types.StateAwaitingStepApproval
 			conv.AwaitingReason = fmt.Sprintf("Awaiting manual approval for step %s", step.Title)
 			if err := s.store.Save(ctx, conv); err != nil {
 				return nil, err
@@ -310,7 +326,7 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 		step.Status = types.StepInProgress
 		step.StartedAt = s.clock()
 		contextLogs := summarizeLogs(conv, 5)
-		execPrompt := fmt.Sprintf("Prompt: %s\nPlan: %s\nRecent context:\n%s\nStep: %s\nYou are executing a plan step. Propose at most one shell command to run as `COMMAND: <cmd>` if needed, otherwise return SUCCESS: <result> or BLOCKED: <reason>. Do not execute the command yourself.", conv.Prompt, conv.PlanText, contextLogs, step.Title)
+		execPrompt := fmt.Sprintf("Prompt: %s\nPlan: %s\nAcceptance criteria: %s\nRecent context:\n%s\nStep: %s\nYou are executing a plan step. Respond with one of:\n- COMMAND: <cmd> (shell command suggestion, do not execute)\n- NEED: <missing info>\n- DEPENDENCY: <what must be installed or prepared>\n- SUCCESS: <result>\n- BLOCKED: <reason>\nKeep it concise and actionable.", conv.Prompt, conv.PlanText, strings.Join(conv.AcceptanceCriteria, "; "), contextLogs, step.Title)
 		reply, raw, newSession, duration, err := s.model.Send(ctx, conv.SessionID, execPrompt)
 		conv.SessionID = newSession
 		call := types.ModelCall{
@@ -339,7 +355,7 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 			cmdText := strings.TrimSpace(reply[len("COMMAND:"):])
 			step.PendingCommand = cmdText
 			step.Status = types.StepBlocked
-			conv.State = types.StateBlocked
+			conv.State = types.StateAwaitingCommand
 			conv.AwaitingReason = "Awaiting approval to run: " + cmdText
 			stepEvent.Command = cmdText
 			stepEvent.Note = "COMMAND_REQUEST"
@@ -349,9 +365,69 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 			}
 			return conv, nil
 		}
+		if strings.HasPrefix(upper, "NEED:") {
+			info := strings.TrimSpace(reply[len("NEED:"):])
+			cmd, cmdCall := s.proposeDiscoveryCommand(ctx, conv, info, "info")
+			if cmdCall != nil {
+				conv.ModelCalls = append(conv.ModelCalls, *cmdCall)
+			}
+			if cmd != "" {
+				step.PendingCommand = cmd
+				step.Status = types.StepBlocked
+				conv.State = types.StateAwaitingCommand
+				conv.AwaitingReason = "Awaiting approval to gather info: " + info
+				stepEvent.Command = cmd
+				stepEvent.Note = "INFO_COMMAND_REQUEST"
+				s.emit(stepEvent)
+				if saveErr := s.store.Save(ctx, conv); saveErr != nil {
+					return nil, saveErr
+				}
+				return conv, nil
+			}
+			step.PendingInfo = info
+			step.Status = types.StepBlocked
+			conv.State = types.StateAwaitingInfo
+			conv.AwaitingReason = "Needs info: " + info
+			stepEvent.Note = conv.AwaitingReason
+			s.emit(stepEvent)
+			if saveErr := s.store.Save(ctx, conv); saveErr != nil {
+				return nil, saveErr
+			}
+			return conv, nil
+		}
+		if strings.HasPrefix(upper, "DEPENDENCY:") {
+			dep := strings.TrimSpace(reply[len("DEPENDENCY:"):])
+			cmd, cmdCall := s.proposeDiscoveryCommand(ctx, conv, dep, "dependency")
+			if cmdCall != nil {
+				conv.ModelCalls = append(conv.ModelCalls, *cmdCall)
+			}
+			if cmd != "" {
+				step.PendingCommand = cmd
+				step.Status = types.StepBlocked
+				conv.State = types.StateAwaitingCommand
+				conv.AwaitingReason = "Awaiting approval to satisfy dependency: " + dep
+				stepEvent.Command = cmd
+				stepEvent.Note = "DEPENDENCY_COMMAND_REQUEST"
+				s.emit(stepEvent)
+				if saveErr := s.store.Save(ctx, conv); saveErr != nil {
+					return nil, saveErr
+				}
+				return conv, nil
+			}
+			step.PendingDependency = dep
+			step.Status = types.StepBlocked
+			conv.State = types.StateAwaitingInfo
+			conv.AwaitingReason = "Dependency required: " + dep
+			stepEvent.Note = conv.AwaitingReason
+			s.emit(stepEvent)
+			if saveErr := s.store.Save(ctx, conv); saveErr != nil {
+				return nil, saveErr
+			}
+			return conv, nil
+		}
 		if err != nil || strings.HasPrefix(upper, "BLOCKED") || strings.HasPrefix(upper, "ERROR") {
 			step.Status = types.StepBlocked
-			conv.State = types.StateBlocked
+			conv.State = types.StateReplanning
 			if err != nil {
 				conv.AwaitingReason = fmt.Sprintf("Execution blocked: %v", err)
 			} else {
@@ -376,6 +452,18 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 			return nil, err
 		}
 	}
+	if len(conv.AcceptanceCriteria) == 0 {
+		return s.completeConversation(ctx, conv)
+	}
+	conv.State = types.StateVerifying
+	conv.AwaitingReason = "Verifying acceptance criteria"
+	if err := s.store.Save(ctx, conv); err != nil {
+		return nil, err
+	}
+	return s.verifyAcceptance(ctx, conv)
+}
+
+func (s *Service) completeConversation(ctx context.Context, conv *types.Conversation) (*types.Conversation, error) {
 	conv.State = types.StateCompleted
 	conv.AwaitingReason = ""
 	finalReply := ""
@@ -399,19 +487,110 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 	return conv, nil
 }
 
-func parsePlan(plan string) []types.Step {
+func (s *Service) verifyAcceptance(ctx context.Context, conv *types.Conversation) (*types.Conversation, error) {
+	checklist := "-"
+	if len(conv.AcceptanceCriteria) > 0 {
+		checklist = "- " + strings.Join(conv.AcceptanceCriteria, "\n- ")
+	}
+	verifyPrompt := fmt.Sprintf("Goal: %s\nAcceptance criteria:\n%s\nRecent execution context:\n%s\nRespond with PASS: <short reason> if all criteria are met. If any are missing, respond with FAIL: <gaps> and list missing items.", conv.Prompt, checklist, summarizeLogs(conv, 8))
+	reply, raw, sessionID, duration, err := s.model.Send(ctx, conv.SessionID, verifyPrompt)
+	if err != nil {
+		conv.State = types.StateBlocked
+		conv.AwaitingReason = fmt.Sprintf("Verification failed: %v", err)
+		_ = s.store.Save(ctx, conv)
+		return nil, err
+	}
+	conv.SessionID = sessionID
+	call := types.ModelCall{
+		Prompt:     verifyPrompt,
+		RawOutput:  raw,
+		Reply:      reply,
+		Timestamp:  s.clock(),
+		DurationMS: duration,
+		SessionID:  sessionID,
+	}
+	conv.ModelCalls = append(conv.ModelCalls, call)
+	upper := strings.ToUpper(strings.TrimSpace(reply))
+	if strings.HasPrefix(upper, "PASS") || strings.HasPrefix(upper, "SUCCESS") {
+		conv.CompletedMessage = "Acceptance criteria satisfied. " + reply
+		conv.CompletedAt = s.clock()
+		conv.State = types.StateCompleted
+		conv.AwaitingReason = ""
+		if err := s.store.Save(ctx, conv); err != nil {
+			return nil, err
+		}
+		return conv, nil
+	}
+	conv.State = types.StateReplanning
+	conv.AwaitingReason = "Verification failed: " + reply
+	if err := s.store.Save(ctx, conv); err != nil {
+		return nil, err
+	}
+	if err := s.resolveBlock(ctx, conv, reply, "acceptance verification"); err != nil {
+		return nil, err
+	}
+	return conv, nil
+}
+
+func (s *Service) proposeDiscoveryCommand(ctx context.Context, conv *types.Conversation, need, kind string) (string, *types.ModelCall) {
+	if conv == nil {
+		return "", nil
+	}
+	prompt := fmt.Sprintf("Goal: %s\nNeed: %s\nPlan: %s\nRecent context:\n%s\nSuggest a single shell command to gather the missing %s or unblock the dependency. Respond strictly as `COMMAND: <cmd>` with no explanation and no execution.", conv.Prompt, need, conv.PlanText, summarizeLogs(conv, 5), kind)
+	reply, raw, sessionID, duration, err := s.model.Send(ctx, conv.SessionID, prompt)
+	call := &types.ModelCall{
+		Prompt:     prompt,
+		RawOutput:  raw,
+		Reply:      reply,
+		Timestamp:  s.clock(),
+		DurationMS: duration,
+		SessionID:  sessionID,
+	}
+	if err != nil {
+		return "", call
+	}
+	upper := strings.ToUpper(strings.TrimSpace(reply))
+	if !strings.HasPrefix(upper, "COMMAND:") {
+		return "", call
+	}
+	cmd := strings.TrimSpace(reply[len("COMMAND:"):])
+	return cmd, call
+}
+
+func parsePlanAndCriteria(plan string) ([]types.Step, []string) {
 	lines := strings.Split(plan, "\n")
 	steps := make([]types.Step, 0, len(lines))
+	acceptance := make([]string, 0)
+	inAcceptance := false
 	for i, line := range lines {
 		text := strings.TrimSpace(line)
 		if text == "" {
+			continue
+		}
+		upper := strings.ToUpper(text)
+		if strings.HasPrefix(upper, "PLAN:") {
+			inAcceptance = false
+			continue
+		}
+		if strings.HasPrefix(upper, "ACCEPTANCE") || strings.HasPrefix(upper, "ACCEPT:") || strings.HasPrefix(upper, "CRITERIA") {
+			inAcceptance = true
+			if strings.Contains(text, ":") {
+				parts := strings.SplitN(text, ":", 2)
+				if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+					acceptance = append(acceptance, strings.TrimSpace(parts[1]))
+				}
+			}
+			continue
+		}
+		if inAcceptance {
+			acceptance = append(acceptance, strings.TrimPrefix(text, "- "))
 			continue
 		}
 		steps = append(steps, types.Step{
 			ID:               fmt.Sprintf("step-%d", len(steps)+1),
 			Title:            text,
 			Status:           types.StepPending,
-			RequiresApproval: false, // stub: manual approval gate not implemented yet
+			RequiresApproval: false,
 			Logs:             []string{},
 		})
 		if i > 10 {
@@ -419,7 +598,7 @@ func parsePlan(plan string) []types.Step {
 			break
 		}
 	}
-	return steps
+	return steps, acceptance
 }
 
 func summarizeLogs(conv *types.Conversation, max int) string {
@@ -440,11 +619,11 @@ func summarizeLogs(conv *types.Conversation, max int) string {
 }
 
 func seedPrompt(prompt string) string {
-	return "You are an execution planner. Given a prompt, produce a concise numbered plan (one step per line) and keep it short.\nPrompt: " + prompt + "\nPlan:"
+	return "You are an execution planner. Given a prompt, produce a concise numbered plan (one step per line) and also list acceptance criteria as `ACCEPT: <criterion>` lines. Keep both lists short and outcome-focused.\nPrompt: " + prompt + "\nPlan:"
 }
 
 func unblockPrompt(goal, stepTitle, reason, planText string) string {
-	return fmt.Sprintf("The goal is: %s\nStep %q failed with reason: %s. Provide a concise revised plan (numbered steps) that helps unblock and continue the goal. Keep it short.\nPrevious plan:\n%s\nNew Plan:", goal, stepTitle, reason, planText)
+	return fmt.Sprintf("The goal is: %s\nStep %q failed with reason: %s. Provide a concise revised plan (numbered steps) and updated acceptance criteria as `ACCEPT:` lines that help unblock and continue the goal. Keep it short.\nPrevious plan and acceptance criteria:\n%s\nNew Plan:", goal, stepTitle, reason, planText)
 }
 
 func (s *Service) resolveBlock(ctx context.Context, conv *types.Conversation, reason, stepTitle string) error {
@@ -455,7 +634,7 @@ func (s *Service) resolveBlock(ctx context.Context, conv *types.Conversation, re
 	}
 	conv.SessionID = sessionID
 	conv.PlanText = reply
-	conv.Steps = parsePlan(reply)
+	conv.Steps, conv.AcceptanceCriteria = parsePlanAndCriteria(reply)
 	conv.PlanVersion++
 	conv.State = types.StateAwaitingPlanApproval
 	conv.AwaitingReason = "Awaiting plan approval after block"

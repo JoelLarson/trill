@@ -301,6 +301,37 @@
         actions.appendChild(resumeBtn);
         card.appendChild(actions);
       }
+      if (item.state === 'awaiting_command' && item.pending_command) {
+        const stepLine = document.createElement('div');
+        stepLine.textContent = `Step: ${item.step_title}`;
+        card.appendChild(stepLine);
+        const cmdLine = document.createElement('div');
+        cmdLine.className = 'status';
+        cmdLine.textContent = `Command: ${item.pending_command}`;
+        card.appendChild(cmdLine);
+      }
+      if (item.state === 'awaiting_info' && (item.pending_info || item.pending_dependency)) {
+        const stepLine = document.createElement('div');
+        stepLine.textContent = `Step: ${item.step_title}`;
+        card.appendChild(stepLine);
+        if (item.pending_info) {
+          const infoLine = document.createElement('div');
+          infoLine.className = 'status';
+          infoLine.textContent = `Needs info: ${item.pending_info}`;
+          card.appendChild(infoLine);
+        }
+        if (item.pending_dependency) {
+          const depLine = document.createElement('div');
+          depLine.className = 'status';
+          depLine.textContent = `Needs dependency: ${item.pending_dependency}`;
+          card.appendChild(depLine);
+        }
+      }
+      if (item.state === 'awaiting_step_approval' && item.step_title) {
+        const stepLine = document.createElement('div');
+        stepLine.textContent = `Step awaiting approval: ${item.step_title}`;
+        card.appendChild(stepLine);
+      }
       if (item.state === 'completed' && item.completed_message) {
         const summary = document.createElement('div');
         summary.className = 'final-output';
@@ -486,6 +517,19 @@
         plan.textContent = conv.plan_text;
         div.appendChild(planTitle);
         div.appendChild(plan);
+      }
+      if (Array.isArray(conv.acceptance_criteria) && conv.acceptance_criteria.length) {
+        const accTitle = document.createElement('div');
+        accTitle.textContent = 'Acceptance criteria:';
+        const list = document.createElement('ul');
+        list.style.paddingLeft = '20px';
+        conv.acceptance_criteria.forEach((c) => {
+          const li = document.createElement('li');
+          li.textContent = c;
+          list.appendChild(li);
+        });
+        div.appendChild(accTitle);
+        div.appendChild(list);
       }
 
       const artifactsSection = document.createElement('div');

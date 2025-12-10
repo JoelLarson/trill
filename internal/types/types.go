@@ -15,6 +15,11 @@ const (
 	StateAwaitingPlanApproval ConversationState = "awaiting_plan_approval"
 	StateExecuting            ConversationState = "executing"
 	StateBlocked              ConversationState = "blocked"
+	StateAwaitingCommand      ConversationState = "awaiting_command"
+	StateAwaitingInfo         ConversationState = "awaiting_info"
+	StateAwaitingStepApproval ConversationState = "awaiting_step_approval"
+	StateVerifying            ConversationState = "verifying"
+	StateReplanning           ConversationState = "replanning"
 	StateCompleted            ConversationState = "completed"
 	StateAborted              ConversationState = "aborted"
 )
@@ -30,14 +35,16 @@ const (
 )
 
 type Step struct {
-	ID               string     `json:"id"`
-	Title            string     `json:"title"`
-	Status           StepStatus `json:"status"`
-	RequiresApproval bool       `json:"requires_approval"`
-	PendingCommand   string     `json:"pending_command"`
-	Logs             []string   `json:"logs"`
-	StartedAt        time.Time  `json:"started_at"`
-	CompletedAt      time.Time  `json:"completed_at"`
+	ID                string     `json:"id"`
+	Title             string     `json:"title"`
+	Status            StepStatus `json:"status"`
+	RequiresApproval  bool       `json:"requires_approval"`
+	PendingCommand    string     `json:"pending_command"`
+	PendingInfo       string     `json:"pending_info"`
+	PendingDependency string     `json:"pending_dependency"`
+	Logs              []string   `json:"logs"`
+	StartedAt         time.Time  `json:"started_at"`
+	CompletedAt       time.Time  `json:"completed_at"`
 }
 
 // ModelCall captures one Codex invocation.
@@ -62,29 +69,32 @@ type Artifact struct {
 
 // Conversation stores the persisted chat context for a Codex session.
 type Conversation struct {
-	SessionID        string            `json:"session_id"`
-	Prompt           string            `json:"prompt"`
-	State            ConversationState `json:"state"`
-	PlanVersion      int               `json:"plan_version"`
-	PlanText         string            `json:"plan_text"`
-	AwaitingReason   string            `json:"awaiting_reason"`
-	Steps            []Step            `json:"steps"`
-	Messages         []Message         `json:"messages"`
-	ModelCalls       []ModelCall       `json:"model_calls"`
-	Artifacts        []Artifact        `json:"artifacts"`
-	CompletedMessage string            `json:"completed_message"`
-	CompletedAt      time.Time         `json:"completed_at"`
+	SessionID          string            `json:"session_id"`
+	Prompt             string            `json:"prompt"`
+	State              ConversationState `json:"state"`
+	PlanVersion        int               `json:"plan_version"`
+	PlanText           string            `json:"plan_text"`
+	AcceptanceCriteria []string          `json:"acceptance_criteria"`
+	AwaitingReason     string            `json:"awaiting_reason"`
+	Steps              []Step            `json:"steps"`
+	Messages           []Message         `json:"messages"`
+	ModelCalls         []ModelCall       `json:"model_calls"`
+	Artifacts          []Artifact        `json:"artifacts"`
+	CompletedMessage   string            `json:"completed_message"`
+	CompletedAt        time.Time         `json:"completed_at"`
 }
 
 // InboxItem summarizes items needing attention.
 type InboxItem struct {
-	SessionID      string            `json:"session_id"`
-	Prompt         string            `json:"prompt"`
-	State          ConversationState `json:"state"`
-	AwaitingReason string            `json:"awaiting_reason"`
-	StepID         string            `json:"step_id,omitempty"`
-	StepTitle      string            `json:"step_title,omitempty"`
-	PendingCommand string            `json:"pending_command,omitempty"`
-	CompletedMessage string          `json:"completed_message,omitempty"`
-	CompletedAt      time.Time       `json:"completed_at,omitempty"`
+	SessionID         string            `json:"session_id"`
+	Prompt            string            `json:"prompt"`
+	State             ConversationState `json:"state"`
+	AwaitingReason    string            `json:"awaiting_reason"`
+	StepID            string            `json:"step_id,omitempty"`
+	StepTitle         string            `json:"step_title,omitempty"`
+	PendingCommand    string            `json:"pending_command,omitempty"`
+	PendingInfo       string            `json:"pending_info,omitempty"`
+	PendingDependency string            `json:"pending_dependency,omitempty"`
+	CompletedMessage  string            `json:"completed_message,omitempty"`
+	CompletedAt       time.Time         `json:"completed_at,omitempty"`
 }
