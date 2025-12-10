@@ -4,14 +4,14 @@ Trill is a tiny agent manager: a Go HTTP service plus a single-page UI that keep
 
 ## Quick start
 - Prerequisites: Go 1.22+ and the `codex` CLI on your `PATH`.
-- Run locally: `go run ./cmd/trill` (defaults to `:8080`).
+- Run locally: `go run ./cmd/trill` (app on `:8080`, observability on `:9090`).
 - Open the UI: http://localhost:8080/ to start or manage conversations.
 - Try the API:
-  ```sh
-  curl -X POST http://localhost:8080/send \
-    -H 'Content-Type: application/json' \
-    -d '{"id":"","message":"hello"}'
-  ```
+ ```sh
+ curl -X POST http://localhost:8080/send \
+ -H 'Content-Type: application/json' \
+ -d '{"id":"","message":"hello"}'
+ ```
 
 ## Installation
 - Build from source:
@@ -28,6 +28,7 @@ Trill is a tiny agent manager: a Go HTTP service plus a single-page UI that keep
 
 ## Usage
 - UI: embedded SPA served at `/` for starting, chatting, inspecting, and closing sessions.
+- Observability UI: served at `/` on the observability port (default `:9090`) with a live event feed of prompts, plan steps, Codex inputs, and outputs.
 - API (JSON):
   - `POST /start` → `{ "id": "" }` (placeholder; IDs appear after the first send)
   - `POST /send` with `{ "id": "<session|empty>", "message": "<text>" }` → reply + session metadata
@@ -38,6 +39,7 @@ Trill is a tiny agent manager: a Go HTTP service plus a single-page UI that keep
 
 ## Configuration
 - Port: `PORT` env var or `-port` flag (default `:8080`).
+- Observability port: `OBS_PORT` env var or `-obs-port` flag (default `:9090`).
 - Model: currently fixed to the local `codex` CLI; future releases will add model selection.
 - Storage: in-memory only; restart clears sessions.
 

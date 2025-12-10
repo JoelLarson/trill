@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trill Observability</title>
+  <style>
+    body { font-family: monospace; background: #0b1220; color: #e6edf3; margin: 12px; }
+    h1 { margin-top: 0; }
+    #feed { display: flex; flex-direction: column-reverse; gap: 8px; }
+    .event { border: 1px solid #253043; padding: 8px; background: #111827; }
+    .meta { font-size: 12px; color: #9da8b7; margin-bottom: 4px; }
+    pre { margin: 4px 0; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Trill Observability</h1>
+  <div id="feed"></div>
+  <script>
+    const feed = document.getElementById('feed');
+    function render(ev) {
+      const div = document.createElement('div');
+      div.className = 'event';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${ev.timestamp} | ${ev.type} | session=${ev.session_id || ''} | step=${ev.step_id || ''}`;
+      div.appendChild(meta);
+      if (ev.prompt) {
+        const p = document.createElement('pre');
+        p.textContent = 'Prompt: ' + ev.prompt;
+        div.appendChild(p);
+      }
+      if (ev.model_prompt) {
+        const p = document.createElement('pre');
+        p.textContent = 'Model prompt: ' + ev.model_prompt;
+        div.appendChild(p);
+      }
+      if (ev.plan_text) {
+        const p = document.createElement('pre');
+        p.textContent = 'Plan: ' + ev.plan_text;
+        div.appendChild(p);
+      }
+      if (ev.step_title) {
+        const p = document.createElement('pre');
+        p.textContent = 'Step: ' + ev.step_title;
+        div.appendChild(p);
+      }
+      if (ev.command) {
+        const p = document.createElement('pre');
+        p.textContent = 'Command: ' + ev.command;
+        div.appendChild(p);
+      }
+      if (ev.raw_output) {
+        const p = document.createElement('pre');
+        p.textContent = 'Raw: ' + ev.raw_output;
+        div.appendChild(p);
+      }
+      if (ev.reply) {
+        const p = document.createElement('pre');
+        p.textContent = 'Reply: ' + ev.reply;
+        div.appendChild(p);
+      }
+      if (ev.note) {
+        const p = document.createElement('pre');
+        p.textContent = 'Note: ' + ev.note;
+        div.appendChild(p);
+      }
+      feed.appendChild(div);
+    }
+    const es = new EventSource('/events');
+    es.onmessage = (msg) => {
+      try {
+        const ev = JSON.parse(msg.data);
+        render(ev);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+  </script>
+</body>
+</html>

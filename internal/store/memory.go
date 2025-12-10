@@ -65,6 +65,13 @@ func cloneConversation(c *types.Conversation) *types.Conversation {
 	copy(calls, c.ModelCalls)
 	steps := make([]types.Step, len(c.Steps))
 	copy(steps, c.Steps)
+	for i := range steps {
+		if len(steps[i].Logs) > 0 {
+			logs := make([]string, len(steps[i].Logs))
+			copy(logs, steps[i].Logs)
+			steps[i].Logs = logs
+		}
+	}
 	return &types.Conversation{
 		SessionID:      c.SessionID,
 		Prompt:         c.Prompt,

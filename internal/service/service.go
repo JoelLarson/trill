@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"trill/internal/codex"
+	"trill/internal/obs"
 	"trill/internal/store"
 	"trill/internal/types"
 )
@@ -15,13 +16,15 @@ import (
 type Service struct {
 	store store.ConversationStore
 	model codex.Client
+	obs   *obs.Broker
 	clock func() time.Time
 }
 
-func New(store store.ConversationStore, model codex.Client) *Service {
+func New(store store.ConversationStore, model codex.Client, broker *obs.Broker) *Service {
 	return &Service{
 		store: store,
 		model: model,
+		obs:   broker,
 		clock: time.Now,
 	}
 }
@@ -63,6 +66,14 @@ func (s *Service) CreateConversation(ctx context.Context, prompt string) (*types
 	if err := s.store.Save(ctx, conv); err != nil {
 		return nil, err
 	}
+	s.emit(obs.Event{
+		Type:        "plan",
+		SessionID:   sessionID,
+		Prompt:      prompt,
+		ModelPrompt: planPrompt,
+		PlanText:    reply,
+		RawOutput:   raw,
+	})
 	return conv, nil
 }
 
@@ -132,6 +143,14 @@ func (s *Service) Send(ctx context.Context, sessionID, msg string) (*types.Model
 	if err := s.store.Save(ctx, conv); err != nil {
 		return nil, err
 	}
+	s.emit(obs.Event{
+		Type:        "chat",
+		SessionID:   newSessionID,
+		Prompt:      msg,
+		ModelPrompt: msg,
+		Reply:       reply,
+		RawOutput:   raw,
+	})
 	return &call, nil
 }
 
@@ -166,18 +185,33 @@ func (s *Service) ApproveCommand(ctx context.Context, sessionID, stepID string) 
 	if target.PendingCommand == "" {
 		return nil, fmt.Errorf("no pending command for step %s", stepID)
 	}
+	pending := target.PendingCommand
 	cmdCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", target.PendingCommand)
+	cmd := exec.CommandContext(cmdCtx, "sh", "-c", pending)
 	out, err := cmd.CombinedOutput()
 	output := string(out)
-	target.Logs = append(target.Logs, "EXEC: "+target.PendingCommand, output)
+	target.Logs = append(target.Logs, "EXEC: "+pending, output)
 	target.PendingCommand = ""
+	commandMsg := types.Message{
+		Role:    "system",
+		Content: fmt.Sprintf("Command output for `%s`:\n%s", pending, output),
+	}
+	conv.Messages = append(conv.Messages, commandMsg)
 	if err != nil {
 		target.Status = types.StepBlocked
 		conv.State = types.StateBlocked
 		conv.AwaitingReason = fmt.Sprintf("Command failed: %v", err)
 		_ = s.store.Save(ctx, conv)
+		s.emit(obs.Event{
+			Type:      "command",
+			SessionID: conv.SessionID,
+			StepID:    target.ID,
+			StepTitle: target.Title,
+			Command:   pending,
+			RawOutput: output,
+			Note:      "ERROR: " + err.Error(),
+		})
 		return conv, nil
 	}
 	target.Status = types.StepDone
@@ -187,6 +221,15 @@ func (s *Service) ApproveCommand(ctx context.Context, sessionID, stepID string) 
 	if err := s.store.Save(ctx, conv); err != nil {
 		return nil, err
 	}
+	s.emit(obs.Event{
+		Type:      "command",
+		SessionID: conv.SessionID,
+		StepID:    target.ID,
+		StepTitle: target.Title,
+		Command:   pending,
+		RawOutput: output,
+		Note:      "SUCCESS",
+	})
 	return s.advanceExecution(ctx, conv)
 }
 
@@ -261,6 +304,16 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 		conv.ModelCalls = append(conv.ModelCalls, call)
 		step.Logs = append(step.Logs, reply)
 		step.CompletedAt = s.clock()
+		stepEvent := obs.Event{
+			Type:        "step",
+			SessionID:   newSession,
+			Prompt:      conv.Prompt,
+			ModelPrompt: execPrompt,
+			StepID:      step.ID,
+			StepTitle:   step.Title,
+			RawOutput:   raw,
+			Reply:       reply,
+		}
 		upper := strings.ToUpper(strings.TrimSpace(reply))
 		if strings.HasPrefix(upper, "COMMAND:") {
 			cmdText := strings.TrimSpace(reply[len("COMMAND:"):])
@@ -268,6 +321,9 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 			step.Status = types.StepBlocked
 			conv.State = types.StateBlocked
 			conv.AwaitingReason = "Awaiting approval to run: " + cmdText
+			stepEvent.Command = cmdText
+			stepEvent.Note = "COMMAND_REQUEST"
+			s.emit(stepEvent)
 			if saveErr := s.store.Save(ctx, conv); saveErr != nil {
 				return nil, saveErr
 			}
@@ -281,6 +337,8 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 			} else {
 				conv.AwaitingReason = "Execution blocked: " + reply
 			}
+			stepEvent.Note = conv.AwaitingReason
+			s.emit(stepEvent)
 			if saveErr := s.store.Save(ctx, conv); saveErr != nil {
 				return nil, saveErr
 			}
@@ -289,6 +347,8 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 		step.Status = types.StepDone
 		conv.State = types.StateExecuting
 		conv.AwaitingReason = ""
+		stepEvent.Note = "SUCCESS"
+		s.emit(stepEvent)
 		if err := s.store.Save(ctx, conv); err != nil {
 			return nil, err
 		}
@@ -343,4 +403,11 @@ func summarizeLogs(conv *types.Conversation, max int) string {
 
 func seedPrompt(prompt string) string {
 	return "You are an execution planner. Given a prompt, produce a concise numbered plan (one step per line) and keep it short.\nPrompt: " + prompt + "\nPlan:"
+}
+
+func (s *Service) emit(ev obs.Event) {
+	if s.obs == nil {
+		return
+	}
+	s.obs.Publish(ev)
 }

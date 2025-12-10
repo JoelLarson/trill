@@ -28,7 +28,7 @@ func (f *fakeModel) Send(ctx context.Context, sessionID, prompt string) (string,
 func TestSendCreatesAndPersistsConversation(t *testing.T) {
 	st := store.NewMemoryStore()
 	model := &fakeModel{reply: "world", durationMS: 100}
-	svc := New(st, model)
+	svc := New(st, model, nil)
 
 	call, err := svc.Send(context.Background(), "", "hello")
 	if err != nil {
@@ -55,7 +55,7 @@ func TestSendCreatesAndPersistsConversation(t *testing.T) {
 func TestSendReturnsErrorOnModelFailure(t *testing.T) {
 	st := store.NewMemoryStore()
 	model := &fakeModel{err: errors.New("boom")}
-	svc := New(st, model)
+	svc := New(st, model, nil)
 	if _, err := svc.Send(context.Background(), "", "hi"); err == nil {
 		t.Fatalf("expected error")
 	}

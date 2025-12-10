@@ -5,15 +5,17 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sync"
 
 	"trill/internal/codex"
 	"trill/internal/config"
+	"trill/internal/obs"
 	"trill/internal/server"
 	"trill/internal/service"
 	"trill/internal/store"
 )
 
-//go:embed ui/*
+//go:embed ui/* obsui/*
 var uiFS embed.FS
 
 func main() {
@@ -21,7 +23,8 @@ func main() {
 
 	store := store.NewMemoryStore()
 	model := codex.NewCLIClient()
-	svc := service.New(store, model)
+	broker := obs.NewBroker()
+	svc := service.New(store, model, broker)
 	srv := server.New(svc)
 
 	mux := http.NewServeMux()
@@ -34,6 +37,26 @@ func main() {
 	uiHandler := http.FileServer(http.FS(uiSub))
 	mux.Handle("/", uiHandler)
 
-	log.Printf("Agent manager listening on %s\n", cfg.Port)
-	log.Fatal(http.ListenAndServe(cfg.Port, mux))
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("Agent manager listening on %s\n", cfg.Port)
+		log.Fatal(http.ListenAndServe(cfg.Port, mux))
+	}()
+
+	obsMux := http.NewServeMux()
+	obsMux.Handle("/events", http.HandlerFunc(broker.SSEHandler))
+	obsSub, err := fs.Sub(uiFS, "obsui")
+	if err != nil {
+		log.Fatalf("embed obs fs error: %v", err)
+	}
+	obsMux.Handle("/", http.FileServer(http.FS(obsSub)))
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("Observability listening on %s\n", cfg.ObsPort)
+		log.Fatal(http.ListenAndServe(cfg.ObsPort, obsMux))
+	}()
+	wg.Wait()
 }
