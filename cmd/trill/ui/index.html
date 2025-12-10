@@ -3,26 +3,59 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agent Manager UI</title>
+  <title>Trill</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
+    :root {
+      color-scheme: light dark;
+      --bg: #f9fafb;
+      --fg: #1c1f26;
+      --muted: #666;
+      --border: #d0d7de;
+      --panel: #ffffff;
+      --user: #1d4ed8;
+      --assistant: #15803d;
+      --error: #b00020;
+      --raw-bg: #f2f4f7;
+    }
+    body.dark {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #9da8b7;
+      --border: #2d3748;
+      --panel: #161b22;
+      --user: #60a5fa;
+      --assistant: #34d399;
+      --error: #ff6b6b;
+      --raw-bg: #1f2733;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: var(--bg);
+      color: var(--fg);
+    }
     #conversations { margin-bottom: 20px; }
-    .conv { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
-    .messages { max-height: 200px; overflow-y: auto; border-top: 1px solid #eee; padding-top: 5px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+    button { cursor: pointer; }
+    .conv { border: 1px solid var(--border); padding: 10px; margin-bottom: 10px; background: var(--panel); }
+    .messages { max-height: 200px; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 5px; }
     .msg { margin: 6px 0; }
-    .msg.user { color: #0066cc; }
-    .msg.assistant { color: #008000; }
-    .msg.error { color: #b00020; font-style: italic; }
+    .msg.user { color: var(--user); }
+    .msg.assistant { color: var(--assistant); }
+    .msg.error { color: var(--error); font-style: italic; }
     #newMessage { width: 80%; }
-    .status { font-size: 12px; color: #666; margin-top: 6px; }
-    .raw-output { background: #f7f7f7; border: 1px dashed #ccc; padding: 6px; margin-top: 4px; white-space: pre-wrap; font-size: 12px; }
-    .session { font-size: 12px; color: #444; margin-bottom: 6px; }
+    .status { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .raw-output { background: var(--raw-bg); border: 1px dashed var(--border); padding: 6px; margin-top: 4px; white-space: pre-wrap; font-size: 12px; color: var(--fg); }
+    .session { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     .session button { margin-left: 6px; }
   </style>
 </head>
 <body>
-  <h1>Agent Manager</h1>
-  <button id="startBtn">Start New Conversation</button>
+  <h1>Trill</h1>
+  <div class="toolbar">
+    <button id="startBtn">Start New Conversation</button>
+    <button id="themeToggle">Toggle Theme</button>
+  </div>
   <div id="inbox"></div>
   <div id="conversations"></div>
 
@@ -30,6 +63,15 @@
     const apiBase = '';
     const formatSeconds = (ms) => (ms / 1000).toFixed(1) + 's';
     let pendingConversations = [];
+    const applyTheme = (mode) => {
+      document.body.classList.toggle('dark', mode === 'dark');
+      localStorage.setItem('theme', mode);
+    };
+    const initTheme = () => {
+      const stored = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(stored || (prefersDark ? 'dark' : 'light'));
+    };
     const fetchConversation = async (id) => {
       const res = await fetch(`/conversation?id=${encodeURIComponent(id)}`);
       if (!res.ok) throw new Error(await res.text() || res.statusText);
@@ -261,7 +303,12 @@
       pendingConversations.push(conv);
       renderConversation(conv);
     };
+    document.getElementById('themeToggle').onclick = () => {
+      const isDark = document.body.classList.contains('dark');
+      applyTheme(isDark ? 'light' : 'dark');
+    };
     // initial load
+    initTheme();
     fetchConversations();
     fetchInbox();
   </script>
