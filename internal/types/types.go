@@ -8,6 +8,37 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+type ConversationState string
+
+const (
+	StatePlanning             ConversationState = "planning"
+	StateAwaitingPlanApproval ConversationState = "awaiting_plan_approval"
+	StateExecuting            ConversationState = "executing"
+	StateBlocked              ConversationState = "blocked"
+	StateCompleted            ConversationState = "completed"
+	StateAborted              ConversationState = "aborted"
+)
+
+type StepStatus string
+
+const (
+	StepPending    StepStatus = "pending"
+	StepInProgress StepStatus = "in_progress"
+	StepDone       StepStatus = "done"
+	StepFailed     StepStatus = "failed"
+	StepBlocked    StepStatus = "blocked"
+)
+
+type Step struct {
+	ID               string     `json:"id"`
+	Title            string     `json:"title"`
+	Status           StepStatus `json:"status"`
+	RequiresApproval bool       `json:"requires_approval"`
+	Logs             []string   `json:"logs"`
+	StartedAt        time.Time  `json:"started_at"`
+	CompletedAt      time.Time  `json:"completed_at"`
+}
+
 // ModelCall captures one Codex invocation.
 type ModelCall struct {
 	Prompt     string    `json:"prompt"`
@@ -20,7 +51,21 @@ type ModelCall struct {
 
 // Conversation stores the persisted chat context for a Codex session.
 type Conversation struct {
-	SessionID  string      `json:"session_id"`
-	Messages   []Message   `json:"messages"`
-	ModelCalls []ModelCall `json:"model_calls"`
+	SessionID      string            `json:"session_id"`
+	Goal           string            `json:"goal"`
+	State          ConversationState `json:"state"`
+	PlanVersion    int               `json:"plan_version"`
+	PlanText       string            `json:"plan_text"`
+	AwaitingReason string            `json:"awaiting_reason"`
+	Steps          []Step            `json:"steps"`
+	Messages       []Message         `json:"messages"`
+	ModelCalls     []ModelCall       `json:"model_calls"`
+}
+
+// InboxItem summarizes items needing attention.
+type InboxItem struct {
+	SessionID      string            `json:"session_id"`
+	Goal           string            `json:"goal"`
+	State          ConversationState `json:"state"`
+	AwaitingReason string            `json:"awaiting_reason"`
 }

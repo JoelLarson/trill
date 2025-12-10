@@ -23,6 +23,7 @@
 <body>
   <h1>Agent Manager</h1>
   <button id="startBtn">Start New Conversation</button>
+  <div id="inbox"></div>
   <div id="conversations"></div>
 
   <script>
@@ -34,6 +35,21 @@
       if (!res.ok) throw new Error(await res.text() || res.statusText);
       return res.json();
     };
+    async function fetchInbox() {
+      const res = await fetch('/inbox');
+      const list = await res.json();
+      const box = document.getElementById('inbox');
+      box.innerHTML = '<h3>Inbox</h3>';
+      if (!Array.isArray(list) || list.length === 0) {
+        box.innerHTML += '<div>No items waiting.</div>';
+        return;
+      }
+      list.forEach(item => {
+        const div = document.createElement('div');
+        div.textContent = `${item.state}: ${item.goal || ''} ${item.awaiting_reason ? '— ' + item.awaiting_reason : ''}`;
+        box.appendChild(div);
+      });
+    }
     async function fetchConversations() {
       const res = await fetch('/list');
       const ids = await res.json();
@@ -51,6 +67,7 @@
           container.appendChild(div);
         }
       }
+      fetchInbox();
     }
     async function renderConversation(conv) {
       const domId = conv.session_id || conv.id || conv.local_id;
@@ -246,6 +263,7 @@
     };
     // initial load
     fetchConversations();
+    fetchInbox();
   </script>
 </body>
 </html>

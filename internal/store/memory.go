@@ -63,9 +63,17 @@ func cloneConversation(c *types.Conversation) *types.Conversation {
 	copy(msgs, c.Messages)
 	calls := make([]types.ModelCall, len(c.ModelCalls))
 	copy(calls, c.ModelCalls)
+	steps := make([]types.Step, len(c.Steps))
+	copy(steps, c.Steps)
 	return &types.Conversation{
-		SessionID:  c.SessionID,
-		Messages:   msgs,
-		ModelCalls: calls,
+		SessionID:      c.SessionID,
+		Goal:           c.Goal,
+		State:          c.State,
+		PlanVersion:    c.PlanVersion,
+		PlanText:       c.PlanText,
+		AwaitingReason: c.AwaitingReason,
+		Steps:          steps,
+		Messages:       msgs,
+		ModelCalls:     calls,
 	}
 }
