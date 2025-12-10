@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"trill/internal/store"
@@ -103,5 +104,53 @@ func TestAutoProvideInfoAdvancesExecution(t *testing.T) {
 	}
 	if conv.Steps[0].PendingCommand != "echo detecting" {
 		t.Fatalf("pending command not captured: %+v", conv.Steps[0])
+	}
+}
+
+func TestSendUnblocksAwaitingInfo(t *testing.T) {
+	st := store.NewMemoryStore()
+	model := &scriptedModel{
+		replies: []string{
+			"1) need repo path",
+			"NEED: Which repo path?",
+			"No command",
+			"SUCCESS: done",
+		},
+	}
+	svc := New(st, model, nil)
+	conv, err := svc.CreateConversation(context.Background(), "Gather info")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	conv, err = svc.ApprovePlan(context.Background(), conv.SessionID)
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if conv.State != "awaiting_info" {
+		t.Fatalf("expected awaiting_info, got %s", conv.State)
+	}
+	call, err := svc.Send(context.Background(), conv.SessionID, "/home/me/project")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if call.Reply != "SUCCESS: done" {
+		t.Fatalf("expected execution to resume after info, got %+v", call)
+	}
+	updated, err := st.Get(context.Background(), conv.SessionID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if updated.State != "completed" {
+		t.Fatalf("expected completion, got %s", updated.State)
+	}
+	foundInfo := false
+	for _, log := range updated.Steps[0].Logs {
+		if strings.Contains(log, "USER_INFO") {
+			foundInfo = true
+			break
+		}
+	}
+	if !foundInfo {
+		t.Fatalf("user info not logged: %+v", updated.Steps[0].Logs)
 	}
 }

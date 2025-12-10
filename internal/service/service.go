@@ -126,6 +126,36 @@ func (s *Service) Send(ctx context.Context, sessionID, msg string) (*types.Model
 		conv = &types.Conversation{}
 	}
 	conv.Messages = append(conv.Messages, types.Message{Role: "user", Content: msg})
+	// If the conversation is awaiting info/dependency, treat this as the answer and resume.
+	if conv.State == types.StateAwaitingInfo {
+		for i := range conv.Steps {
+			step := &conv.Steps[i]
+			if step.PendingInfo != "" || step.PendingDependency != "" {
+				step.Logs = append(step.Logs, "USER_INFO: "+msg)
+				step.PendingInfo = ""
+				step.PendingDependency = ""
+				step.Status = types.StepPending
+				conv.State = types.StateExecuting
+				conv.AwaitingReason = ""
+				if err := s.store.Save(ctx, conv); err != nil {
+					return nil, err
+				}
+				updated, err := s.advanceExecution(ctx, conv)
+				if err != nil {
+					return nil, err
+				}
+				if len(updated.ModelCalls) > 0 {
+					last := updated.ModelCalls[len(updated.ModelCalls)-1]
+					return &last, nil
+				}
+				return &types.ModelCall{
+					Prompt:    msg,
+					Reply:     "",
+					SessionID: updated.SessionID,
+				}, nil
+			}
+		}
+	}
 	reply, raw, newSessionID, duration, err := s.model.Send(ctx, conv.SessionID, msg)
 	if err != nil {
 		return nil, err

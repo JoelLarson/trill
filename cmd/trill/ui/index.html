@@ -95,6 +95,20 @@
       font-size: 12px;
       color: var(--muted);
     }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 6px;
+    }
+    .badge.waiting { border-color: #f97316; color: #c2410c; }
+    .badge.command { border-color: #60a5fa; color: #1d4ed8; }
+    .badge.info { border-color: #a855f7; color: #7e22ce; }
+    .badge.verifying { border-color: #22c55e; color: #15803d; }
+    .badge.replanning { border-color: #eab308; color: #854d0e; }
     .content {
       display: flex;
       flex-direction: column;
@@ -229,6 +243,27 @@
       return button;
     }
 
+    function createStateBadge(state) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = state;
+      const map = {
+        awaiting_command: 'badge command',
+        awaiting_info: 'badge info',
+        awaiting_plan_approval: 'badge waiting',
+        awaiting_step_approval: 'badge waiting',
+        verifying: 'badge verifying',
+        replanning: 'badge replanning',
+        blocked: 'badge waiting',
+        executing: 'badge',
+        completed: 'badge',
+      };
+      if (map[state]) {
+        badge.className = map[state];
+      }
+      return badge;
+    }
+
     function renderInboxItem(item) {
       const card = document.createElement('div');
       card.className = 'inbox-item';
@@ -243,6 +278,10 @@
         card.appendChild(reason);
       }
       if (item.state === 'awaiting_plan_approval') {
+        const badge = document.createElement('span');
+        badge.className = 'badge waiting';
+        badge.textContent = 'Awaiting plan approval';
+        header.appendChild(badge);
         const actions = document.createElement('div');
         actions.className = 'inbox-actions';
         actions.className = 'inbox-actions';
@@ -302,6 +341,10 @@
         card.appendChild(actions);
       }
       if (item.state === 'awaiting_command' && item.pending_command) {
+        const badge = document.createElement('span');
+        badge.className = 'badge command';
+        badge.textContent = 'Awaiting command approval';
+        header.appendChild(badge);
         const stepLine = document.createElement('div');
         stepLine.textContent = `Step: ${item.step_title}`;
         card.appendChild(stepLine);
@@ -311,6 +354,10 @@
         card.appendChild(cmdLine);
       }
       if (item.state === 'awaiting_info' && (item.pending_info || item.pending_dependency)) {
+        const badge = document.createElement('span');
+        badge.className = 'badge info';
+        badge.textContent = 'Awaiting info';
+        header.appendChild(badge);
         const stepLine = document.createElement('div');
         stepLine.textContent = `Step: ${item.step_title}`;
         card.appendChild(stepLine);
@@ -326,8 +373,49 @@
           depLine.textContent = `Needs dependency: ${item.pending_dependency}`;
           card.appendChild(depLine);
         }
+        const hint = document.createElement('div');
+        hint.className = 'status';
+        hint.textContent = 'Provide the requested info below to unblock.';
+        card.appendChild(hint);
+        const form = document.createElement('div');
+        form.style.display = 'flex';
+        form.style.gap = '6px';
+        form.style.marginTop = '6px';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Enter info...';
+        input.style.flex = '1';
+        const submit = document.createElement('button');
+        submit.textContent = 'Send info';
+        submit.onclick = async () => {
+          const text = input.value.trim();
+          if (!text) return;
+          submit.disabled = true;
+          input.disabled = true;
+          const resp = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: item.session_id, message: text }),
+          });
+          if (!resp.ok) {
+            alert(await resp.text());
+          } else {
+            await fetchConversations();
+            fetchInbox();
+          }
+          submit.disabled = false;
+          input.disabled = false;
+          input.value = '';
+        };
+        form.appendChild(input);
+        form.appendChild(submit);
+        card.appendChild(form);
       }
       if (item.state === 'awaiting_step_approval' && item.step_title) {
+        const badge = document.createElement('span');
+        badge.className = 'badge waiting';
+        badge.textContent = 'Awaiting step approval';
+        header.appendChild(badge);
         const stepLine = document.createElement('div');
         stepLine.textContent = `Step awaiting approval: ${item.step_title}`;
         card.appendChild(stepLine);
@@ -396,7 +484,8 @@
         title.textContent = conv.prompt || 'Conversation';
         const meta = document.createElement('span');
         meta.className = 'meta';
-        meta.textContent = `State: ${conv.state || 'unknown'}`;
+        meta.textContent = 'State: ';
+        meta.appendChild(createStateBadge(conv.state || 'unknown'));
         btn.appendChild(title);
         btn.appendChild(meta);
         btn.onclick = () => {
@@ -499,7 +588,13 @@
 
       const meta = document.createElement('div');
       meta.className = 'status';
-      meta.textContent = `State: ${conv.state || 'unknown'}${conv.awaiting_reason ? ' — ' + conv.awaiting_reason : ''}`;
+      meta.textContent = 'State: ';
+      meta.appendChild(createStateBadge(conv.state || 'unknown'));
+      if (conv.awaiting_reason) {
+        const reason = document.createElement('span');
+        reason.textContent = ' — ' + conv.awaiting_reason;
+        meta.appendChild(reason);
+      }
       div.appendChild(meta);
 
       if (conv.prompt) {
