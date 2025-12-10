@@ -14,10 +14,11 @@ import (
 )
 
 type Service struct {
-	store store.ConversationStore
-	model codex.Client
-	obs   *obs.Broker
-	clock func() time.Time
+	store   store.ConversationStore
+	model   codex.Client
+	obs     *obs.Broker
+	clock   func() time.Time
+	Prompts *PromptSet
 }
 
 func New(store store.ConversationStore, model codex.Client, broker *obs.Broker) *Service {
@@ -40,7 +41,10 @@ func (s *Service) CreateConversation(ctx context.Context, prompt string) (*types
 	if prompt == "" {
 		return nil, fmt.Errorf("prompt is required")
 	}
-	planPrompt := seedPrompt(prompt)
+	planPrompt, err := s.renderPlanPrompt(prompt)
+	if err != nil {
+		return nil, err
+	}
 	reply, raw, sessionID, duration, err := s.model.Send(ctx, "", planPrompt)
 	if err != nil {
 		return nil, err
@@ -356,7 +360,10 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 		step.Status = types.StepInProgress
 		step.StartedAt = s.clock()
 		contextLogs := summarizeLogs(conv, 5)
-		execPrompt := fmt.Sprintf("Prompt: %s\nPlan: %s\nAcceptance criteria: %s\nRecent context:\n%s\nStep: %s\nYou are executing a plan step. Respond with one of:\n- COMMAND: <cmd> (shell command suggestion, do not execute)\n- NEED: <missing info>\n- DEPENDENCY: <what must be installed or prepared>\n- SUCCESS: <result>\n- BLOCKED: <reason>\nKeep it concise and actionable.", conv.Prompt, conv.PlanText, strings.Join(conv.AcceptanceCriteria, "; "), contextLogs, step.Title)
+		execPrompt, err := s.renderExecutePrompt(conv, step, contextLogs)
+		if err != nil {
+			return nil, err
+		}
 		reply, raw, newSession, duration, err := s.model.Send(ctx, conv.SessionID, execPrompt)
 		conv.SessionID = newSession
 		call := types.ModelCall{
@@ -522,7 +529,10 @@ func (s *Service) verifyAcceptance(ctx context.Context, conv *types.Conversation
 	if len(conv.AcceptanceCriteria) > 0 {
 		checklist = "- " + strings.Join(conv.AcceptanceCriteria, "\n- ")
 	}
-	verifyPrompt := fmt.Sprintf("Goal: %s\nAcceptance criteria:\n%s\nRecent execution context:\n%s\nRespond with PASS: <short reason> if all criteria are met. If any are missing, respond with FAIL: <gaps> and list missing items.", conv.Prompt, checklist, summarizeLogs(conv, 8))
+	verifyPrompt, err := s.renderVerifyPrompt(conv, checklist)
+	if err != nil {
+		return nil, err
+	}
 	reply, raw, sessionID, duration, err := s.model.Send(ctx, conv.SessionID, verifyPrompt)
 	if err != nil {
 		conv.State = types.StateBlocked
@@ -566,7 +576,10 @@ func (s *Service) proposeDiscoveryCommand(ctx context.Context, conv *types.Conve
 	if conv == nil {
 		return "", nil
 	}
-	prompt := fmt.Sprintf("Goal: %s\nNeed: %s\nPlan: %s\nRecent context:\n%s\nSuggest a single shell command to gather the missing %s or unblock the dependency. Respond strictly as `COMMAND: <cmd>` with no explanation and no execution.", conv.Prompt, need, conv.PlanText, summarizeLogs(conv, 5), kind)
+	prompt, err := s.renderProposeCommandPrompt(conv, need, kind)
+	if err != nil {
+		return "", nil
+	}
 	reply, raw, sessionID, duration, err := s.model.Send(ctx, conv.SessionID, prompt)
 	call := &types.ModelCall{
 		Prompt:     prompt,
@@ -657,7 +670,10 @@ func unblockPrompt(goal, stepTitle, reason, planText string) string {
 }
 
 func (s *Service) resolveBlock(ctx context.Context, conv *types.Conversation, reason, stepTitle string) error {
-	prompt := unblockPrompt(conv.Prompt, stepTitle, reason, conv.PlanText)
+	prompt, err := s.renderUnblockPrompt(conv.Prompt, stepTitle, reason, conv.PlanText)
+	if err != nil {
+		return err
+	}
 	reply, raw, sessionID, duration, err := s.model.Send(ctx, conv.SessionID, prompt)
 	if err != nil {
 		return err
@@ -713,4 +729,63 @@ func (s *Service) emit(ev obs.Event) {
 		return
 	}
 	s.obs.Publish(ev)
+}
+
+func (s *Service) renderPlanPrompt(prompt string) (string, error) {
+	if s.Prompts != nil && s.Prompts.Plan != nil {
+		return renderPrompt(s.Prompts.Plan, map[string]string{"Prompt": prompt})
+	}
+	return seedPrompt(prompt), nil
+}
+
+func (s *Service) renderExecutePrompt(conv *types.Conversation, step *types.Step, contextLogs string) (string, error) {
+	if s.Prompts != nil && s.Prompts.ExecuteStep != nil {
+		return renderPrompt(s.Prompts.ExecuteStep, map[string]any{
+			"Goal":        conv.Prompt,
+			"Plan":        conv.PlanText,
+			"Criteria":    strings.Join(conv.AcceptanceCriteria, "; "),
+			"Context":     contextLogs,
+			"StepTitle":   step.Title,
+			"StepID":      step.ID,
+			"PlanVersion": conv.PlanVersion,
+		})
+	}
+	return fmt.Sprintf("Prompt: %s\nPlan: %s\nAcceptance criteria: %s\nRecent context:\n%s\nStep: %s\nYou are executing a plan step. Respond with one of:\n- COMMAND: <cmd> (shell command suggestion, do not execute)\n- NEED: <missing info>\n- DEPENDENCY: <what must be installed or prepared>\n- SUCCESS: <result>\n- BLOCKED: <reason>\nKeep it concise and actionable.", conv.Prompt, conv.PlanText, strings.Join(conv.AcceptanceCriteria, "; "), contextLogs, step.Title), nil
+}
+
+func (s *Service) renderProposeCommandPrompt(conv *types.Conversation, need, kind string) (string, error) {
+	if s.Prompts != nil && s.Prompts.ProposeCommand != nil {
+		return renderPrompt(s.Prompts.ProposeCommand, map[string]any{
+			"Goal":     conv.Prompt,
+			"Need":     need,
+			"Plan":     conv.PlanText,
+			"Context":  summarizeLogs(conv, 5),
+			"Kind":     kind,
+			"Criteria": strings.Join(conv.AcceptanceCriteria, "; "),
+		})
+	}
+	return fmt.Sprintf("Goal: %s\nNeed: %s\nPlan: %s\nRecent context:\n%s\nSuggest a single shell command to gather the missing %s or unblock the dependency. Respond strictly as `COMMAND: <cmd>` with no explanation and no execution.", conv.Prompt, need, conv.PlanText, summarizeLogs(conv, 5), kind), nil
+}
+
+func (s *Service) renderVerifyPrompt(conv *types.Conversation, checklist string) (string, error) {
+	if s.Prompts != nil && s.Prompts.Verify != nil {
+		return renderPrompt(s.Prompts.Verify, map[string]any{
+			"Goal":      conv.Prompt,
+			"Checklist": checklist,
+			"Context":   summarizeLogs(conv, 8),
+		})
+	}
+	return fmt.Sprintf("Goal: %s\nAcceptance criteria:\n%s\nRecent execution context:\n%s\nRespond with PASS: <short reason> if all criteria are met. If any are missing, respond with FAIL: <gaps> and list missing items.", conv.Prompt, checklist, summarizeLogs(conv, 8)), nil
+}
+
+func (s *Service) renderUnblockPrompt(goal, stepTitle, reason, planText string) (string, error) {
+	if s.Prompts != nil && s.Prompts.Unblock != nil {
+		return renderPrompt(s.Prompts.Unblock, map[string]any{
+			"Goal":      goal,
+			"StepTitle": stepTitle,
+			"Reason":    reason,
+			"PlanText":  planText,
+		})
+	}
+	return unblockPrompt(goal, stepTitle, reason, planText), nil
 }

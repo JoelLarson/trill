@@ -24,7 +24,12 @@ func main() {
 	store := store.NewMemoryStore()
 	model := codex.NewCLIClient()
 	broker := obs.NewBroker()
+	prompts, err := service.LoadPrompts("prompts")
+	if err != nil {
+		log.Fatalf("failed to load prompts: %v", err)
+	}
 	svc := service.New(store, model, broker)
+	svc.Prompts = prompts
 	srv := server.New(svc)
 
 	mux := http.NewServeMux()

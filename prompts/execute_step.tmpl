@@ -1,0 +1,13 @@
+Prompt: {{.Goal}}
+Plan: {{.Plan}}
+Acceptance criteria: {{.Criteria}}
+Recent context:
+{{.Context}}
+Step: {{.StepTitle}}
+You are executing a plan step. Respond with one of:
+- COMMAND: <cmd> (shell command suggestion, do not execute)
+- NEED: <missing info>
+- DEPENDENCY: <what must be installed or prepared>
+- SUCCESS: <result>
+- BLOCKED: <reason>
+Keep it concise and actionable.
