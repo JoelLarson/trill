@@ -49,9 +49,29 @@
     .session { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     .session button { margin-left: 6px; }
     .pill { display: inline-block; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); margin-right: 6px; }
+    .artifact-section { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+    .artifact-card { border: 1px dashed var(--border); padding: 8px; margin-top: 6px; background: var(--raw-bg); }
+    .artifact-card button { margin-top: 6px; }
+    .final-output {
+      margin-top: 12px;
+      border: 1px solid #60a5fa;
+      background: #dbeafe;
+      padding: 10px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+    .final-output .meta {
+      font-weight: normal;
+      font-size: 13px;
+    }
+    body.dark .final-output {
+      background: #14213d;
+      border-color: #38bdf8;
+    }
   </style>
 </head>
 <body>
+  <div id="app">
   <h1>Trill</h1>
   <div class="toolbar">
     <input id="promptInput" type="text" placeholder="Enter prompt..." style="flex:1;" />
@@ -60,6 +80,7 @@
   </div>
   <div id="inbox"></div>
   <div id="conversations"></div>
+  </div>
 
   <script>
     const formatSeconds = (ms) => (ms / 1000).toFixed(1) + 's';
@@ -162,11 +183,6 @@
       titleRow.appendChild(actions);
       div.appendChild(titleRow);
 
-      const meta = document.createElement('div');
-      meta.className = 'status';
-      meta.textContent = `State: ${conv.state || 'unknown'}${conv.awaiting_reason ? ' — ' + conv.awaiting_reason : ''}`;
-      div.appendChild(meta);
-
       const session = document.createElement('div');
       session.className = 'session';
       if (conv.session_id) {
@@ -187,6 +203,18 @@
       }
       div.appendChild(session);
 
+      const meta = document.createElement('div');
+      meta.className = 'status';
+      meta.textContent = `State: ${conv.state || 'unknown'}${conv.awaiting_reason ? ' — ' + conv.awaiting_reason : ''}`;
+      div.appendChild(meta);
+
+      if (conv.prompt) {
+        const promptBlock = document.createElement('div');
+        promptBlock.className = 'prompt-block';
+        promptBlock.textContent = `Prompt: ${conv.prompt}`;
+        div.appendChild(promptBlock);
+      }
+
       if (conv.plan_text) {
         const planTitle = document.createElement('div');
         planTitle.textContent = 'Plan:';
@@ -196,6 +224,52 @@
         div.appendChild(planTitle);
         div.appendChild(plan);
       }
+
+      const artifactsSection = document.createElement('div');
+      artifactsSection.className = 'artifact-section';
+      div.appendChild(artifactsSection);
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = `newMessage-${domId}`;
+      input.placeholder = 'Send a chat message...';
+      const msgsDiv = document.createElement('div');
+      msgsDiv.className = 'messages';
+      const sendBtn = document.createElement('button');
+      sendBtn.textContent = 'Send';
+      sendBtn.onclick = async () => {
+        const text = input.value.trim();
+        if (!text) return;
+        addMessage(msgsDiv, 'user', text);
+        sendBtn.disabled = true;
+        input.disabled = true;
+        try {
+          const resp = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: conv.session_id || '', message: text })
+          });
+          if (!resp.ok) {
+            addMessage(msgsDiv, 'error', await resp.text());
+          } else {
+            const data = await resp.json();
+            addMessage(msgsDiv, 'assistant', data.reply, data.duration_ms ? formatSeconds(data.duration_ms) : null, data.raw_output, data.prompt);
+          }
+        } catch (err) {
+          addMessage(msgsDiv, 'error', err.message);
+        }
+        sendBtn.disabled = false;
+        input.disabled = false;
+        input.value = '';
+      };
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          sendBtn.click();
+        }
+      });
+
+      renderArtifacts(artifactsSection, conv, input);
 
       if (Array.isArray(conv.steps) && conv.steps.length) {
         const stepsList = document.createElement('div');
@@ -239,52 +313,49 @@
         div.appendChild(stepsList);
       }
 
-      const msgsDiv = document.createElement('div');
-      msgsDiv.className = 'messages';
+      const modelCalls = Array.isArray(conv.model_calls) ? conv.model_calls : [];
+      const assistantMessages = (conv.messages || []).filter((m) => m.role === 'assistant');
+      const lastAssistant = assistantMessages[assistantMessages.length - 1];
+      const finalCall = modelCalls[modelCalls.length - 1] || {};
+      const finalText = conv.completed_message || (lastAssistant && lastAssistant.content) || finalCall.reply || 'Awaiting response...';
+      const finalOutput = document.createElement('div');
+      finalOutput.className = 'final-output';
+      const finalLabel = document.createElement('div');
+      finalLabel.textContent = 'Final output response';
+      finalOutput.appendChild(finalLabel);
+      const finalBody = document.createElement('div');
+      finalBody.textContent = finalText;
+      finalOutput.appendChild(finalBody);
+      if (conv.completed_at) {
+        const finalMeta = document.createElement('div');
+        finalMeta.className = 'meta';
+        finalMeta.textContent = `Completed at ${new Date(conv.completed_at).toLocaleString()}`;
+        finalOutput.appendChild(finalMeta);
+      }
+      if (finalCall.duration_ms || finalCall.raw_output) {
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = `Last call duration: ${finalCall.duration_ms ? formatSeconds(finalCall.duration_ms) : 'n/a'}`;
+        finalOutput.appendChild(meta);
+        if (finalCall.raw_output) {
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
+          summary.textContent = 'Raw output';
+          details.appendChild(summary);
+          const pre = document.createElement('pre');
+          pre.className = 'raw-output';
+          pre.textContent = finalCall.raw_output;
+          details.appendChild(pre);
+          finalOutput.appendChild(details);
+        }
+      }
+      div.appendChild(finalOutput);
+
       div.appendChild(msgsDiv);
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.id = `newMessage-${domId}`;
-      input.placeholder = 'Send a chat message...';
-      const sendBtn = document.createElement('button');
-      sendBtn.textContent = 'Send';
-      sendBtn.onclick = async () => {
-        const text = input.value.trim();
-        if (!text) return;
-        addMessage(msgsDiv, 'user', text);
-        sendBtn.disabled = true;
-        input.disabled = true;
-        try {
-          const resp = await fetch('/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: conv.session_id || '', message: text })
-          });
-          if (!resp.ok) {
-            addMessage(msgsDiv, 'error', await resp.text());
-          } else {
-            const data = await resp.json();
-            addMessage(msgsDiv, 'assistant', data.reply, data.duration_ms ? formatSeconds(data.duration_ms) : null, data.raw_output, data.prompt);
-          }
-        } catch (err) {
-          addMessage(msgsDiv, 'error', err.message);
-        }
-        sendBtn.disabled = false;
-        input.disabled = false;
-        input.value = '';
-      };
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          sendBtn.click();
-        }
-      });
       div.appendChild(input);
       div.appendChild(sendBtn);
 
-      // Render existing messages
       let assistantIdx = 0;
-      const modelCalls = Array.isArray(conv.model_calls) ? conv.model_calls : [];
       (conv.messages || []).forEach((m) => {
         if (m.role === 'assistant') {
           const call = modelCalls[assistantIdx] || {};
@@ -314,10 +385,10 @@
       }).join('\n');
     }
 
-    function addMessage(container, role, text, meta, rawOutput, promptText) {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'msg ' + role;
-      const line = document.createElement('div');
+function addMessage(container, role, text, meta, rawOutput, promptText) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'msg ' + role;
+  const line = document.createElement('div');
       const label = meta ? `${role} (${meta})` : role;
       line.textContent = label + ': ' + text;
       wrapper.appendChild(line);
@@ -343,10 +414,52 @@
         details.appendChild(pre);
         wrapper.appendChild(details);
       }
-      container.appendChild(wrapper);
-    }
+  container.appendChild(wrapper);
+}
 
-    document.getElementById('startBtn').onclick = async () => {
+function renderArtifacts(container, conv, input) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = '<div><strong>Artifacts</strong></div>';
+  if (!Array.isArray(conv.artifacts) || conv.artifacts.length === 0) {
+    container.innerHTML += '<div class="status">No cached artifacts.</div>';
+    return;
+  }
+  conv.artifacts.forEach((artifact) => {
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    const title = document.createElement('div');
+    title.textContent = `${artifact.title}${artifact.source ? ' (' + artifact.source + ')' : ''}`;
+    card.appendChild(title);
+    if (artifact.description) {
+      const desc = document.createElement('div');
+      desc.className = 'status';
+      desc.textContent = artifact.description;
+      card.appendChild(desc);
+    }
+    if (artifact.created_at) {
+      const created = document.createElement('div');
+      created.className = 'status';
+      created.textContent = `Captured: ${artifact.created_at}`;
+      card.appendChild(created);
+    }
+    const pre = document.createElement('pre');
+    pre.className = 'raw-output';
+    pre.textContent = artifact.content;
+    card.appendChild(pre);
+    const useBtn = document.createElement('button');
+    useBtn.textContent = 'Use in prompt';
+    useBtn.onclick = () => {
+      input.value = artifact.content;
+      input.focus();
+    };
+    card.appendChild(useBtn);
+    container.appendChild(card);
+  });
+}
+
+document.getElementById('startBtn').onclick = async () => {
       const prompt = document.getElementById('promptInput').value.trim();
       if (!prompt) return;
       const resp = await fetch('/conversation/create', {

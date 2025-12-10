@@ -72,15 +72,20 @@ func cloneConversation(c *types.Conversation) *types.Conversation {
 			steps[i].Logs = logs
 		}
 	}
+	artifacts := make([]types.Artifact, len(c.Artifacts))
+	copy(artifacts, c.Artifacts)
 	return &types.Conversation{
-		SessionID:      c.SessionID,
-		Prompt:         c.Prompt,
-		State:          c.State,
-		PlanVersion:    c.PlanVersion,
-		PlanText:       c.PlanText,
-		AwaitingReason: c.AwaitingReason,
-		Steps:          steps,
-		Messages:       msgs,
-		ModelCalls:     calls,
+		SessionID:        c.SessionID,
+		Prompt:           c.Prompt,
+		State:            c.State,
+		PlanVersion:      c.PlanVersion,
+		PlanText:         c.PlanText,
+		AwaitingReason:   c.AwaitingReason,
+		Steps:            steps,
+		Messages:         msgs,
+		ModelCalls:       calls,
+		Artifacts:        artifacts,
+		CompletedMessage: c.CompletedMessage,
+		CompletedAt:      c.CompletedAt,
 	}
 }

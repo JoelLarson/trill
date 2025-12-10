@@ -198,19 +198,21 @@ func (s *Service) ApproveCommand(ctx context.Context, sessionID, stepID string) 
 		Content: fmt.Sprintf("Command output for `%s`:\n%s", pending, output),
 	}
 	conv.Messages = append(conv.Messages, commandMsg)
+	artifact := s.addArtifact(conv, "Command output", fmt.Sprintf("Output for `%s`", pending), output, pending)
 	if err != nil {
 		target.Status = types.StepBlocked
 		conv.State = types.StateBlocked
 		conv.AwaitingReason = fmt.Sprintf("Command failed: %v", err)
 		_ = s.store.Save(ctx, conv)
 		s.emit(obs.Event{
-			Type:      "command",
-			SessionID: conv.SessionID,
-			StepID:    target.ID,
-			StepTitle: target.Title,
-			Command:   pending,
-			RawOutput: output,
-			Note:      "ERROR: " + err.Error(),
+			Type:       "command",
+			SessionID:  conv.SessionID,
+			StepID:     target.ID,
+			StepTitle:  target.Title,
+			Command:    pending,
+			RawOutput:  output,
+			Note:       "ERROR: " + err.Error(),
+			ArtifactID: artifact.ID,
 		})
 		return conv, nil
 	}
@@ -222,13 +224,14 @@ func (s *Service) ApproveCommand(ctx context.Context, sessionID, stepID string) 
 		return nil, err
 	}
 	s.emit(obs.Event{
-		Type:      "command",
-		SessionID: conv.SessionID,
-		StepID:    target.ID,
-		StepTitle: target.Title,
-		Command:   pending,
-		RawOutput: output,
-		Note:      "SUCCESS",
+		Type:       "command",
+		SessionID:  conv.SessionID,
+		StepID:     target.ID,
+		StepTitle:  target.Title,
+		Command:    pending,
+		RawOutput:  output,
+		Note:       "SUCCESS",
+		ArtifactID: artifact.ID,
 	})
 	return s.advanceExecution(ctx, conv)
 }
@@ -355,6 +358,21 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 	}
 	conv.State = types.StateCompleted
 	conv.AwaitingReason = ""
+	finalReply := ""
+	if len(conv.ModelCalls) > 0 {
+		finalReply = conv.ModelCalls[len(conv.ModelCalls)-1].Reply
+	}
+	if finalReply == "" && len(conv.Steps) > 0 {
+		lastStep := conv.Steps[len(conv.Steps)-1]
+		if len(lastStep.Logs) > 0 {
+			finalReply = lastStep.Logs[len(lastStep.Logs)-1]
+		}
+	}
+	conv.CompletedMessage = "Plan completed successfully."
+	if finalReply != "" {
+		conv.CompletedMessage += " Last response: " + finalReply
+	}
+	conv.CompletedAt = s.clock()
 	if err := s.store.Save(ctx, conv); err != nil {
 		return nil, err
 	}
@@ -363,7 +381,7 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 
 func parsePlan(plan string) []types.Step {
 	lines := strings.Split(plan, "\n")
-	steps := []types.Step{}
+	steps := make([]types.Step, 0, len(lines))
 	for i, line := range lines {
 		text := strings.TrimSpace(line)
 		if text == "" {
@@ -403,6 +421,22 @@ func summarizeLogs(conv *types.Conversation, max int) string {
 
 func seedPrompt(prompt string) string {
 	return "You are an execution planner. Given a prompt, produce a concise numbered plan (one step per line) and keep it short.\nPrompt: " + prompt + "\nPlan:"
+}
+
+func (s *Service) addArtifact(conv *types.Conversation, title, description, content, source string) *types.Artifact {
+	if conv == nil {
+		return nil
+	}
+	artifact := types.Artifact{
+		ID:          fmt.Sprintf("artifact-%d", time.Now().UnixNano()),
+		Title:       title,
+		Description: description,
+		Content:     content,
+		Source:      source,
+		CreatedAt:   s.clock(),
+	}
+	conv.Artifacts = append(conv.Artifacts, artifact)
+	return &artifact
 }
 
 func (s *Service) emit(ev obs.Event) {

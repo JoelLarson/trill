@@ -60,6 +60,11 @@
         p.textContent = 'Reply: ' + ev.reply;
         div.appendChild(p);
       }
+      if (ev.artifact_id) {
+        const p = document.createElement('pre');
+        p.textContent = 'Artifact ID: ' + ev.artifact_id;
+        div.appendChild(p);
+      }
       if (ev.note) {
         const p = document.createElement('pre');
         p.textContent = 'Note: ' + ev.note;

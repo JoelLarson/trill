@@ -21,6 +21,7 @@ type Event struct {
 	RawOutput   string    `json:"raw_output,omitempty"`
 	Reply       string    `json:"reply,omitempty"`
 	Note        string    `json:"note,omitempty"`
+	ArtifactID  string    `json:"artifact_id,omitempty"`
 }
 
 type Broker struct {

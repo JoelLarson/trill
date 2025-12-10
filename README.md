@@ -29,6 +29,7 @@ Trill is a tiny agent manager: a Go HTTP service plus a single-page UI that keep
 ## Usage
 - UI: embedded SPA served at `/` for starting, chatting, inspecting, and closing sessions.
 - Observability UI: served at `/` on the observability port (default `:9090`) with a live event feed of prompts, plan steps, Codex inputs, and outputs.
+- Artifact cache: command outputs are stored as reusable artifacts (visible per conversation) so you can drop them back into a prompt without re-running the command.
 - API (JSON):
   - `POST /start` → `{ "id": "" }` (placeholder; IDs appear after the first send)
   - `POST /send` with `{ "id": "<session|empty>", "message": "<text>" }` → reply + session metadata

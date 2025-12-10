@@ -50,17 +50,30 @@ type ModelCall struct {
 	SessionID  string    `json:"session_id"`
 }
 
+// Artifact represents cached context or command output that can be reused later.
+type Artifact struct {
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Content     string    `json:"content"`
+	Source      string    `json:"source"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // Conversation stores the persisted chat context for a Codex session.
 type Conversation struct {
-	SessionID      string            `json:"session_id"`
-	Prompt         string            `json:"prompt"`
-	State          ConversationState `json:"state"`
-	PlanVersion    int               `json:"plan_version"`
-	PlanText       string            `json:"plan_text"`
-	AwaitingReason string            `json:"awaiting_reason"`
-	Steps          []Step            `json:"steps"`
-	Messages       []Message         `json:"messages"`
-	ModelCalls     []ModelCall       `json:"model_calls"`
+	SessionID        string            `json:"session_id"`
+	Prompt           string            `json:"prompt"`
+	State            ConversationState `json:"state"`
+	PlanVersion      int               `json:"plan_version"`
+	PlanText         string            `json:"plan_text"`
+	AwaitingReason   string            `json:"awaiting_reason"`
+	Steps            []Step            `json:"steps"`
+	Messages         []Message         `json:"messages"`
+	ModelCalls       []ModelCall       `json:"model_calls"`
+	Artifacts        []Artifact        `json:"artifacts"`
+	CompletedMessage string            `json:"completed_message"`
+	CompletedAt      time.Time         `json:"completed_at"`
 }
 
 // InboxItem summarizes items needing attention.
