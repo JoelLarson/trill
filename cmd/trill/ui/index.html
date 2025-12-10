@@ -352,6 +352,37 @@
         cmdLine.className = 'status';
         cmdLine.textContent = `Command: ${item.pending_command}`;
         card.appendChild(cmdLine);
+        const actions = document.createElement('div');
+        actions.className = 'inbox-actions';
+        const approveCmd = createButton('Approve Command', async () => {
+          const resp = await fetch('/conversation/approve-command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: item.session_id, step_id: item.step_id }),
+          });
+          if (!resp.ok) {
+            alert(await resp.text());
+            return;
+          }
+          await fetchConversations();
+          fetchInbox();
+        });
+        const resumeBtn = createButton('Resume', async () => {
+          const resp = await fetch('/conversation/resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: item.session_id }),
+          });
+          if (!resp.ok) {
+            alert(await resp.text());
+            return;
+          }
+          await fetchConversations();
+          fetchInbox();
+        });
+        actions.appendChild(approveCmd);
+        actions.appendChild(resumeBtn);
+        card.appendChild(actions);
       }
       if (item.state === 'awaiting_info' && (item.pending_info || item.pending_dependency)) {
         const badge = document.createElement('span');
