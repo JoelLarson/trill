@@ -67,7 +67,7 @@ func cloneConversation(c *types.Conversation) *types.Conversation {
 	copy(steps, c.Steps)
 	return &types.Conversation{
 		SessionID:      c.SessionID,
-		Goal:           c.Goal,
+		Prompt:         c.Prompt,
 		State:          c.State,
 		PlanVersion:    c.PlanVersion,
 		PlanText:       c.PlanText,

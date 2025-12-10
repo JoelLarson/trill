@@ -54,7 +54,7 @@
 <body>
   <h1>Trill</h1>
   <div class="toolbar">
-    <input id="goalInput" type="text" placeholder="Enter goal/task..." style="flex:1;" />
+    <input id="promptInput" type="text" placeholder="Enter prompt..." style="flex:1;" />
     <button id="startBtn">Start New Conversation</button>
     <button id="themeToggle">Toggle Theme</button>
   </div>
@@ -88,7 +88,7 @@
       }
       list.forEach(item => {
         const div = document.createElement('div');
-        div.textContent = `${item.state}: ${item.goal || ''} ${item.awaiting_reason ? '— ' + item.awaiting_reason : ''}`;
+        div.textContent = `${item.state}: ${item.prompt || ''} ${item.awaiting_reason ? '— ' + item.awaiting_reason : ''}`;
         box.appendChild(div);
       });
     }
@@ -119,7 +119,7 @@
       titleRow.style.display = 'flex';
       titleRow.style.justifyContent = 'space-between';
       const h3 = document.createElement('h3');
-      h3.textContent = conv.goal || 'Conversation';
+      h3.textContent = conv.prompt || 'Conversation';
       const actions = document.createElement('div');
       const closeBtn = document.createElement('button');
       closeBtn.textContent = 'Close';
@@ -264,7 +264,7 @@
             addMessage(msgsDiv, 'error', await resp.text());
           } else {
             const data = await resp.json();
-            addMessage(msgsDiv, 'assistant', data.reply, data.duration_ms ? formatSeconds(data.duration_ms) : null, data.raw_output);
+            addMessage(msgsDiv, 'assistant', data.reply, data.duration_ms ? formatSeconds(data.duration_ms) : null, data.raw_output, data.prompt);
           }
         } catch (err) {
           addMessage(msgsDiv, 'error', err.message);
@@ -289,7 +289,7 @@
         if (m.role === 'assistant') {
           const call = modelCalls[assistantIdx] || {};
           const metaMsg = call.duration_ms != null ? formatSeconds(call.duration_ms) : null;
-          addMessage(msgsDiv, m.role, m.content, metaMsg, call.raw_output);
+          addMessage(msgsDiv, m.role, m.content, metaMsg, call.raw_output, call.prompt);
           assistantIdx += 1;
         } else {
           addMessage(msgsDiv, m.role, m.content);
@@ -298,7 +298,23 @@
 
       document.getElementById('conversations').appendChild(div);
     }
-    function addMessage(container, role, text, meta, rawOutput) {
+    function formatCodexEvents(raw) {
+      if (!raw) return '';
+      return raw.split('\n').map((line) => {
+        try {
+          const evt = JSON.parse(line);
+          const parts = [];
+          if (evt.type) parts.push(evt.type);
+          if (evt.thread_id) parts.push(`thread:${evt.thread_id}`);
+          if (evt.item && evt.item.type) parts.push(`item:${evt.item.type}`);
+          return parts.length ? parts.join(' | ') : line;
+        } catch (_) {
+          return line;
+        }
+      }).join('\n');
+    }
+
+    function addMessage(container, role, text, meta, rawOutput, promptText) {
       const wrapper = document.createElement('div');
       wrapper.className = 'msg ' + role;
       const line = document.createElement('div');
@@ -311,7 +327,18 @@
         summary.textContent = 'Codex raw output';
         const pre = document.createElement('pre');
         pre.className = 'raw-output';
-        pre.textContent = rawOutput;
+        pre.textContent = formatCodexEvents(rawOutput);
+        details.appendChild(summary);
+        details.appendChild(pre);
+        wrapper.appendChild(details);
+      }
+      if (promptText) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = 'Prompt sent';
+        const pre = document.createElement('pre');
+        pre.className = 'raw-output';
+        pre.textContent = promptText;
         details.appendChild(summary);
         details.appendChild(pre);
         wrapper.appendChild(details);
@@ -320,18 +347,18 @@
     }
 
     document.getElementById('startBtn').onclick = async () => {
-      const goal = document.getElementById('goalInput').value.trim();
-      if (!goal) return;
+      const prompt = document.getElementById('promptInput').value.trim();
+      if (!prompt) return;
       const resp = await fetch('/conversation/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal })
+        body: JSON.stringify({ prompt })
       });
       if (!resp.ok) {
         alert(await resp.text());
         return;
       }
-      document.getElementById('goalInput').value = '';
+      document.getElementById('promptInput').value = '';
       await fetchConversations();
     };
     document.getElementById('themeToggle').onclick = () => {

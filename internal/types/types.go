@@ -53,7 +53,7 @@ type ModelCall struct {
 // Conversation stores the persisted chat context for a Codex session.
 type Conversation struct {
 	SessionID      string            `json:"session_id"`
-	Goal           string            `json:"goal"`
+	Prompt         string            `json:"prompt"`
 	State          ConversationState `json:"state"`
 	PlanVersion    int               `json:"plan_version"`
 	PlanText       string            `json:"plan_text"`
@@ -66,7 +66,7 @@ type Conversation struct {
 // InboxItem summarizes items needing attention.
 type InboxItem struct {
 	SessionID      string            `json:"session_id"`
-	Goal           string            `json:"goal"`
+	Prompt         string            `json:"prompt"`
 	State          ConversationState `json:"state"`
 	AwaitingReason string            `json:"awaiting_reason"`
 }

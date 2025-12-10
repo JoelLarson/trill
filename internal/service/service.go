@@ -32,12 +32,12 @@ func (s *Service) Start(ctx context.Context) (string, error) {
 }
 
 // CreateConversation seeds a plan and moves to awaiting plan approval.
-func (s *Service) CreateConversation(ctx context.Context, goal string) (*types.Conversation, error) {
-	goal = strings.TrimSpace(goal)
-	if goal == "" {
-		return nil, fmt.Errorf("goal is required")
+func (s *Service) CreateConversation(ctx context.Context, prompt string) (*types.Conversation, error) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return nil, fmt.Errorf("prompt is required")
 	}
-	planPrompt := seedPrompt(goal)
+	planPrompt := seedPrompt(prompt)
 	reply, raw, sessionID, duration, err := s.model.Send(ctx, "", planPrompt)
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func (s *Service) CreateConversation(ctx context.Context, goal string) (*types.C
 	steps := parsePlan(reply)
 	conv := &types.Conversation{
 		SessionID:      sessionID,
-		Goal:           goal,
+		Prompt:         prompt,
 		State:          types.StateAwaitingPlanApproval,
 		PlanVersion:    1,
 		PlanText:       reply,
@@ -190,8 +190,8 @@ func (s *Service) ApproveCommand(ctx context.Context, sessionID, stepID string) 
 	return s.advanceExecution(ctx, conv)
 }
 
-func (s *Service) PlanAndExecute(ctx context.Context, goal string) (string, error) {
-	conv, err := s.CreateConversation(ctx, goal)
+func (s *Service) PlanAndExecute(ctx context.Context, prompt string) (string, error) {
+	conv, err := s.CreateConversation(ctx, prompt)
 	if err != nil {
 		return "", err
 	}
@@ -223,7 +223,7 @@ func (s *Service) ListInbox(ctx context.Context) ([]types.InboxItem, error) {
 				SessionID:      conv.SessionID,
 				State:          conv.State,
 				AwaitingReason: conv.AwaitingReason,
-				Goal:           conv.Goal,
+				Prompt:         conv.Prompt,
 			})
 		}
 	}
@@ -246,7 +246,8 @@ func (s *Service) advanceExecution(ctx context.Context, conv *types.Conversation
 		}
 		step.Status = types.StepInProgress
 		step.StartedAt = s.clock()
-		execPrompt := fmt.Sprintf("Goal: %s\nStep: %s\nYou are executing a plan step. Propose at most one shell command to run as `COMMAND: <cmd>` if needed, otherwise return SUCCESS: <result> or BLOCKED: <reason>. Do not execute the command yourself.", conv.Goal, step.Title)
+		contextLogs := summarizeLogs(conv, 5)
+		execPrompt := fmt.Sprintf("Prompt: %s\nPlan: %s\nRecent context:\n%s\nStep: %s\nYou are executing a plan step. Propose at most one shell command to run as `COMMAND: <cmd>` if needed, otherwise return SUCCESS: <result> or BLOCKED: <reason>. Do not execute the command yourself.", conv.Prompt, conv.PlanText, contextLogs, step.Title)
 		reply, raw, newSession, duration, err := s.model.Send(ctx, conv.SessionID, execPrompt)
 		conv.SessionID = newSession
 		call := types.ModelCall{
@@ -323,6 +324,23 @@ func parsePlan(plan string) []types.Step {
 	return steps
 }
 
-func seedPrompt(goal string) string {
-	return "You are an execution planner. Given a goal, produce a concise numbered plan (one step per line) and keep it short.\nGoal: " + goal + "\nPlan:"
+func summarizeLogs(conv *types.Conversation, max int) string {
+	var entries []string
+	for i := len(conv.Steps) - 1; i >= 0 && len(entries) < max; i-- {
+		step := conv.Steps[i]
+		for j := len(step.Logs) - 1; j >= 0 && len(entries) < max; j-- {
+			entries = append(entries, fmt.Sprintf("%s: %s", step.Title, step.Logs[j]))
+		}
+	}
+	if len(entries) == 0 {
+		return "None"
+	}
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	return strings.Join(entries, "\n")
+}
+
+func seedPrompt(prompt string) string {
+	return "You are an execution planner. Given a prompt, produce a concise numbered plan (one step per line) and keep it short.\nPrompt: " + prompt + "\nPlan:"
 }

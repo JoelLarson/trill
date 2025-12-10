@@ -34,7 +34,7 @@ Trill is a tiny agent manager: a Go HTTP service plus a single-page UI that keep
   - `GET /list` → `["sess-1", "sess-2", ...]`
   - `GET /conversation?id=<session>` → full conversation payload
   - `POST /close` with `{ "id": "<session>" }` → 200 on success
-  - `POST /run` with `{ "goal": "<text>" }` → lightweight plan/execute loop, returns `{"result": "<text>" }`
+ - `POST /run` with `{ "prompt": "<text>" }` → lightweight plan/execute loop, returns `{"result": "<text>" }`
 
 ## Configuration
 - Port: `PORT` env var or `-port` flag (default `:8080`).

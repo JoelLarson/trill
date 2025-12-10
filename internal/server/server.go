@@ -123,13 +123,13 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var payload struct {
-		Goal string `json:"goal"`
+		Prompt string `json:"prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	conv, err := s.svc.CreateConversation(r.Context(), payload.Goal)
+	conv, err := s.svc.CreateConversation(r.Context(), payload.Prompt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -217,13 +217,13 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Goal string `json:"goal"`
+		Prompt string `json:"prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	result, err := s.svc.PlanAndExecute(r.Context(), payload.Goal)
+	result, err := s.svc.PlanAndExecute(r.Context(), payload.Prompt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
