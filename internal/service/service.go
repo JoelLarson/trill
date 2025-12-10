@@ -264,13 +264,35 @@ func (s *Service) ListInbox(ctx context.Context) ([]types.InboxItem, error) {
 		if err != nil {
 			continue
 		}
-		if conv.State == types.StateAwaitingPlanApproval || conv.State == types.StateBlocked {
-			inbox = append(inbox, types.InboxItem{
-				SessionID:      conv.SessionID,
-				State:          conv.State,
-				AwaitingReason: conv.AwaitingReason,
-				Prompt:         conv.Prompt,
-			})
+		item := types.InboxItem{
+			SessionID:       conv.SessionID,
+			State:           conv.State,
+			AwaitingReason:  conv.AwaitingReason,
+			Prompt:          conv.Prompt,
+			CompletedMessage: conv.CompletedMessage,
+			CompletedAt:      conv.CompletedAt,
+		}
+		switch conv.State {
+		case types.StateAwaitingPlanApproval:
+			inbox = append(inbox, item)
+		case types.StateBlocked:
+			var pendingStep *types.Step
+			for i := range conv.Steps {
+				if conv.Steps[i].PendingCommand != "" {
+					pendingStep = &conv.Steps[i]
+					break
+				}
+			}
+			if pendingStep != nil {
+				item.StepID = pendingStep.ID
+				item.StepTitle = pendingStep.Title
+				item.PendingCommand = pendingStep.PendingCommand
+				inbox = append(inbox, item)
+			}
+		case types.StateCompleted:
+			if conv.CompletedMessage != "" {
+				inbox = append(inbox, item)
+			}
 		}
 	}
 	return inbox, nil

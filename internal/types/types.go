@@ -82,4 +82,9 @@ type InboxItem struct {
 	Prompt         string            `json:"prompt"`
 	State          ConversationState `json:"state"`
 	AwaitingReason string            `json:"awaiting_reason"`
+	StepID         string            `json:"step_id,omitempty"`
+	StepTitle      string            `json:"step_title,omitempty"`
+	PendingCommand string            `json:"pending_command,omitempty"`
+	CompletedMessage string          `json:"completed_message,omitempty"`
+	CompletedAt      time.Time       `json:"completed_at,omitempty"`
 }

@@ -52,6 +52,9 @@
     .artifact-section { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
     .artifact-card { border: 1px dashed var(--border); padding: 8px; margin-top: 6px; background: var(--raw-bg); }
     .artifact-card button { margin-top: 6px; }
+    .inbox-item { border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-top: 8px; background: var(--panel); }
+    .inbox-item .status { font-size: 12px; color: var(--muted); }
+    .inbox-actions { display: flex; gap: 8px; margin-top: 10px; }
     .final-output {
       margin-top: 12px;
       border: 1px solid #60a5fa;
@@ -107,11 +110,102 @@
         box.innerHTML += '<div>No items waiting.</div>';
         return;
       }
-      list.forEach(item => {
-        const div = document.createElement('div');
-        div.textContent = `${item.state}: ${item.prompt || ''} ${item.awaiting_reason ? '— ' + item.awaiting_reason : ''}`;
-        box.appendChild(div);
-      });
+      list.forEach((item) => box.appendChild(renderInboxItem(item)));
+    }
+
+    function createButton(label, onclick) {
+      const button = document.createElement('button');
+      button.textContent = label;
+      button.onclick = onclick;
+      button.style.marginRight = '6px';
+      return button;
+    }
+
+    function renderInboxItem(item) {
+      const card = document.createElement('div');
+      card.className = 'inbox-item';
+      const header = document.createElement('div');
+      header.textContent = `[${item.state}] ${item.prompt || 'Conversation'}`;
+      header.className = 'status';
+      card.appendChild(header);
+      if (item.awaiting_reason) {
+        const reason = document.createElement('div');
+        reason.className = 'status';
+        reason.textContent = item.awaiting_reason;
+        card.appendChild(reason);
+      }
+      if (item.state === 'awaiting_plan_approval') {
+        const actions = document.createElement('div');
+        actions.className = 'inbox-actions';
+        actions.className = 'inbox-actions';
+        const approvePlan = createButton('Approve Plan', async () => {
+          const resp = await fetch('/conversation/approve-plan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: item.session_id }),
+          });
+          if (!resp.ok) {
+            alert(await resp.text());
+            return;
+          }
+          await fetchConversations();
+          fetchInbox();
+        });
+        actions.appendChild(approvePlan);
+        card.appendChild(actions);
+      }
+      if (item.state === 'blocked' && item.pending_command) {
+        const stepLine = document.createElement('div');
+        stepLine.textContent = `Step: ${item.step_title}`;
+        card.appendChild(stepLine);
+        const cmdLine = document.createElement('div');
+        cmdLine.className = 'status';
+        cmdLine.textContent = `Command: ${item.pending_command}`;
+        card.appendChild(cmdLine);
+        const actions = document.createElement('div');
+        const approveCmd = createButton('Approve Command', async () => {
+          const resp = await fetch('/conversation/approve-command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: item.session_id, step_id: item.step_id }),
+          });
+          if (!resp.ok) {
+            alert(await resp.text());
+            return;
+          }
+          await fetchConversations();
+          fetchInbox();
+        });
+        actions.appendChild(approveCmd);
+        const resumeBtn = createButton('Resume', async () => {
+          const resp = await fetch('/conversation/resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: item.session_id }),
+          });
+          if (!resp.ok) {
+            alert(await resp.text());
+            return;
+          }
+          await fetchConversations();
+          fetchInbox();
+        });
+        actions.appendChild(resumeBtn);
+        card.appendChild(actions);
+      }
+      if (item.state === 'completed' && item.completed_message) {
+        const summary = document.createElement('div');
+        summary.className = 'final-output';
+        summary.textContent = item.completed_message;
+        if (item.completed_at) {
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          meta.textContent = `Completed at ${new Date(item.completed_at).toLocaleString()}`;
+          summary.appendChild(meta);
+        }
+        card.appendChild(summary);
+      }
+      return card;
     }
     async function fetchConversations() {
       const res = await fetch('/list');
